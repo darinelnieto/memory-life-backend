@@ -3,6 +3,8 @@
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\FamilyController;
+use App\Http\Controllers\JourneyController;
+use App\Http\Controllers\JourneyItemController;
 use App\Http\Controllers\MemoryController;
 use App\Http\Controllers\MemoryLeafController;
 use App\Http\Controllers\PostController;
@@ -64,5 +66,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('tree-members', [TreeMemberController::class, 'store']);
         Route::patch('tree-members/{member}', [TreeMemberController::class, 'update']);
         Route::delete('tree-members/{member}', [TreeMemberController::class, 'destroy']);
+
+        // Journeys
+        Route::get('journeys', [JourneyController::class, 'index']);
+        Route::post('journeys', [JourneyController::class, 'store']);
+        Route::get('journeys/{journey}', [JourneyController::class, 'show']);
+        Route::delete('journeys/{journey}', [JourneyController::class, 'destroy']);
+        Route::post('journeys/{journey}/items', [JourneyItemController::class, 'store']);
+        Route::delete('journeys/{journey}/items/{item}', [JourneyItemController::class, 'destroy']);
     });
 });

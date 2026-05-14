@@ -38,6 +38,11 @@ class Family extends Model
         return $this->hasMany(MemoryLeaf::class);
     }
 
+    public function journeys(): HasMany
+    {
+        return $this->hasMany(Journey::class);
+    }
+
     public function getMemberCountAttribute(): int
     {
         return $this->familyMembers()->count();
