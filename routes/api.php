@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\SocialAuthController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\FamilyController;
 use App\Http\Controllers\JourneyController;
 use App\Http\Controllers\JourneyItemController;
@@ -42,6 +43,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Feed (posts) y Memory Leaf — siempre con contexto de familia
     Route::prefix('families/{family}')->group(function () {
+        // Chat directo entre miembros de la familia
+        Route::get('chat/contacts', [ChatController::class, 'contacts']);
+        Route::get('chat/conversations/{member}', [ChatController::class, 'conversation']);
+        Route::post('chat/conversations/{member}', [ChatController::class, 'store']);
+
         // Posts del feed
         Route::get('posts', [PostController::class, 'index']);
         Route::post('posts', [PostController::class, 'store']);

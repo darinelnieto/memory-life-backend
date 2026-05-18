@@ -24,9 +24,15 @@ return [
         'http://localhost:3000',
         'http://localhost:8080',
         'http://127.0.0.1:9000',
+        'https://tuwebdeboda.com',
+        'https://www.tuwebdeboda.com',
+        'https://memory-life-frontend-git-main-darinelnietos-projects.vercel.app',
+        'https://memory-life-frontend-97zheq13m-darinelnietos-projects.vercel.app',
     ],
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        '#^https://.*\.vercel\.app$#',
+    ],
 
     'allowed_headers' => ['*'],
 

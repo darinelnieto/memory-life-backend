@@ -37,7 +37,7 @@ class ProfileController extends Controller
     public function uploadAvatar(Request $request): JsonResponse
     {
         $request->validate([
-            'avatar' => 'required|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'avatar' => 'required|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ]);
 
         $user = $request->user();
@@ -55,7 +55,7 @@ class ProfileController extends Controller
     public function uploadCover(Request $request): JsonResponse
     {
         $request->validate([
-            'cover' => 'required|image|mimes:jpg,jpeg,png,webp|max:10240',
+            'cover' => 'required|file|mimes:jpg,jpeg,png,webp,heic,heif|max:20480',
         ]);
 
         $user = $request->user();
