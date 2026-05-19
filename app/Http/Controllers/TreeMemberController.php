@@ -127,6 +127,45 @@ class TreeMemberController extends Controller
         return response()->json(['message' => 'Member removed.']);
     }
 
+    /** Link the authenticated user to a TreeMember ("This is me"). */
+    public function claimAsMe(Request $request, Family $family, TreeMember $member): TreeMemberResource
+    {
+        $this->authorizeFamily($family);
+        abort_if($member->family_id !== $family->id, 403);
+        abort_if(
+            $member->user_id !== null && $member->user_id !== $request->user()->id,
+            422,
+            'Este perfil ya está vinculado a otro usuario.'
+        );
+
+        $alreadyClaimed = TreeMember::where('family_id', $family->id)
+            ->where('user_id', $request->user()->id)
+            ->where('id', '!=', $member->id)
+            ->exists();
+
+        abort_if($alreadyClaimed, 422, 'Ya tienes un perfil vinculado en este árbol familiar.');
+
+        $member->update(['user_id' => $request->user()->id]);
+
+        return new TreeMemberResource($member->fresh()->load(['children', 'spouse']));
+    }
+
+    /** Unlink the authenticated user from a TreeMember. */
+    public function unclaimMe(Request $request, Family $family, TreeMember $member): TreeMemberResource
+    {
+        $this->authorizeFamily($family);
+        abort_if($member->family_id !== $family->id, 403);
+        abort_if(
+            $member->user_id !== $request->user()->id,
+            403,
+            'No puedes desvincular un perfil que no te corresponde.'
+        );
+
+        $member->update(['user_id' => null]);
+
+        return new TreeMemberResource($member->fresh()->load(['children', 'spouse']));
+    }
+
     private function authorizeFamily(Family $family): void
     {
         abort_unless(

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Resources\FamilyResource;
 use App\Models\Family;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -62,6 +63,38 @@ class FamilyController extends Controller
         return new FamilyResource($family->load('familyMembers'));
     }
 
+    public function addMember(Request $request, Family $family): JsonResponse
+    {
+        $this->authorizeManager($family, $request);
+
+        $validated = $request->validate([
+            'identifier' => 'required|string|max:255',
+        ]);
+
+        $member = User::query()
+            ->where('email', $validated['identifier'])
+            ->orWhere('username', $validated['identifier'])
+            ->first();
+
+        abort_unless($member, 404, 'No existe un usuario con ese correo o nombre de usuario.');
+        abort_if($member->id === $request->user()->id, 422, 'Tu usuario ya pertenece a esta familia.');
+        abort_if(
+            $family->familyMembers()->where('user_id', $member->id)->exists(),
+            422,
+            'Ese usuario ya pertenece a esta familia.'
+        );
+
+        $family->members()->attach($member->id, [
+            'role' => 'member',
+            'joined_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Miembro agregado a la familia.',
+            'data' => new FamilyResource($family->loadCount('familyMembers')->load('familyMembers')),
+        ], 201);
+    }
+
     public function destroy(Request $request, Family $family): JsonResponse
     {
         $this->authorizeOwner($family, $request);
@@ -86,6 +119,18 @@ class FamilyController extends Controller
             $family->owner_id === $request->user()->id,
             403,
             'Solo el propietario puede realizar esta acción'
+        );
+    }
+
+    private function authorizeManager(Family $family, Request $request): void
+    {
+        abort_unless(
+            $family->familyMembers()
+                ->where('user_id', $request->user()->id)
+                ->whereIn('role', ['owner', 'admin'])
+                ->exists(),
+            403,
+            'Solo un administrador de la familia puede realizar esta acción'
         );
     }
 }

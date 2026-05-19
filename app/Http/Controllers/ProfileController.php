@@ -38,6 +38,8 @@ class ProfileController extends Controller
     {
         $request->validate([
             'avatar' => 'required|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
+        ], [
+            'avatar.max' => 'La foto de perfil no puede superar los 10 MB.',
         ]);
 
         $user = $request->user();

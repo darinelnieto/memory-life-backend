@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\FamilyController;
+use App\Http\Controllers\FamilyInvitationController;
 use App\Http\Controllers\JourneyController;
 use App\Http\Controllers\JourneyItemController;
 use App\Http\Controllers\MemoryController;
@@ -34,6 +35,17 @@ Route::prefix('auth')->group(function () {
 // Rutas protegidas
 Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('families', FamilyController::class);
+    Route::post('families/{family}/members', [FamilyController::class, 'addMember']);
+
+    // Invitaciones familiares
+    Route::get('invitations/pending', [FamilyInvitationController::class, 'myInvitations']);
+    Route::post('invitations/{token}/accept', [FamilyInvitationController::class, 'accept']);
+    Route::post('invitations/{token}/reject', [FamilyInvitationController::class, 'reject']);
+    Route::prefix('families/{family}/invitations')->group(function () {
+        Route::get('', [FamilyInvitationController::class, 'index']);
+        Route::post('', [FamilyInvitationController::class, 'invite']);
+        Route::delete('{invitation}', [FamilyInvitationController::class, 'cancel']);
+    });
 
     // Perfil del usuario autenticado
     Route::get('profile', [ProfileController::class, 'show']);
@@ -47,6 +59,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('chat/contacts', [ChatController::class, 'contacts']);
         Route::get('chat/conversations/{member}', [ChatController::class, 'conversation']);
         Route::post('chat/conversations/{member}', [ChatController::class, 'store']);
+        Route::post('chat/conversations/{member}/typing', [ChatController::class, 'typing']);
 
         // Posts del feed
         Route::get('posts', [PostController::class, 'index']);
@@ -72,6 +85,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('tree-members', [TreeMemberController::class, 'store']);
         Route::patch('tree-members/{member}', [TreeMemberController::class, 'update']);
         Route::delete('tree-members/{member}', [TreeMemberController::class, 'destroy']);
+        Route::post('tree-members/{member}/claim', [TreeMemberController::class, 'claimAsMe']);
+        Route::delete('tree-members/{member}/claim', [TreeMemberController::class, 'unclaimMe']);
 
         // Journeys
         Route::get('journeys', [JourneyController::class, 'index']);

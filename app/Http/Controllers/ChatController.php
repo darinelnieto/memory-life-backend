@@ -8,6 +8,7 @@ use App\Models\Family;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class ChatController extends Controller
 {
@@ -15,6 +16,14 @@ class ChatController extends Controller
     {
         $user = $request->user();
         $this->authorizeFamilyMember($family, $user->id);
+
+        $unreadBySender = ChatMessage::query()
+            ->where('family_id', $family->id)
+            ->where('recipient_id', $user->id)
+            ->whereNull('read_at')
+            ->selectRaw('sender_id, COUNT(*) as total')
+            ->groupBy('sender_id')
+            ->pluck('total', 'sender_id');
 
         $contacts = $family->members()
             ->where('users.id', '!=', $user->id)
@@ -26,10 +35,17 @@ class ChatController extends Controller
                 'email' => $member->email,
                 'avatar_url' => $member->avatar_url,
                 'role' => $member->pivot?->role,
+                'is_typing' => Cache::has($this->typingKey($family->id, $member->id, $user->id)),
+                'unread_count' => (int) ($unreadBySender[$member->id] ?? 0),
             ])
             ->values();
 
-        return response()->json(['data' => $contacts]);
+        return response()->json([
+            'data' => $contacts,
+            'meta' => [
+                'total_unread' => (int) $unreadBySender->sum(),
+            ],
+        ]);
     }
 
     public function conversation(Request $request, Family $family, User $member): JsonResponse
@@ -56,7 +72,14 @@ class ChatController extends Controller
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
 
-        return response()->json(['data' => ChatMessageResource::collection($messages)]);
+        $isTyping = Cache::has($this->typingKey($family->id, $member->id, $user->id));
+
+        return response()->json([
+            'data' => ChatMessageResource::collection($messages),
+            'meta' => [
+                'contact_is_typing' => $isTyping,
+            ],
+        ]);
     }
 
     public function store(Request $request, Family $family, User $member): JsonResponse
@@ -79,7 +102,31 @@ class ChatController extends Controller
 
         $message->load(['sender', 'recipient']);
 
+        Cache::forget($this->typingKey($family->id, $user->id, $member->id));
+
         return response()->json(['data' => new ChatMessageResource($message)], 201);
+    }
+
+    public function typing(Request $request, Family $family, User $member): JsonResponse
+    {
+        $user = $request->user();
+        $this->authorizeConversation($family, $user->id, $member->id);
+
+        abort_if($user->id === $member->id, 422, 'No puedes enviarte estado de escritura a ti mismo.');
+
+        $validated = $request->validate([
+            'is_typing' => 'required|boolean',
+        ]);
+
+        $key = $this->typingKey($family->id, $user->id, $member->id);
+
+        if ($validated['is_typing']) {
+            Cache::put($key, true, now()->addSeconds(6));
+        } else {
+            Cache::forget($key);
+        }
+
+        return response()->json(['ok' => true]);
     }
 
     private function authorizeConversation(Family $family, int $userId, int $memberId): void
@@ -95,5 +142,10 @@ class ChatController extends Controller
             403,
             'No tienes acceso a esta familia'
         );
+    }
+
+    private function typingKey(int $familyId, int $fromUserId, int $toUserId): string
+    {
+        return "chat_typing:{$familyId}:{$fromUserId}:{$toUserId}";
     }
 }
