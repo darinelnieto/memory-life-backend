@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Family;
+use App\Models\Post;
 use App\Http\Resources\ProfileResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -70,5 +72,41 @@ class ProfileController extends Controller
         $user->update(['cover_photo' => $path]);
 
         return response()->json(['data' => new ProfileResource($user->fresh())]);
+    }
+
+    public function media(Request $request, Family $family): JsonResponse
+    {
+        abort_unless(
+            $family->familyMembers()->where('user_id', $request->user()->id)->exists(),
+            403,
+            'No tienes acceso a esta familia'
+        );
+
+        $posts = Post::query()
+            ->where('family_id', $family->id)
+            ->where('user_id', $request->user()->id)
+            ->whereNotNull('media_path')
+            ->whereIn('type', ['photo', 'video'])
+            ->withCount(['likes', 'comments'])
+            ->latest()
+            ->get();
+
+        $transform = static function (Post $post): array {
+            return [
+                'id' => $post->id,
+                'url' => $post->media_url,
+                'created_at' => $post->created_at?->toISOString(),
+                'caption' => $post->content,
+                'likes_count' => (int) ($post->likes_count ?? 0),
+                'comments_count' => (int) ($post->comments_count ?? 0),
+            ];
+        };
+
+        return response()->json([
+            'data' => [
+                'photos' => $posts->where('type', 'photo')->values()->map($transform)->all(),
+                'videos' => $posts->where('type', 'video')->values()->map($transform)->all(),
+            ],
+        ]);
     }
 }

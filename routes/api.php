@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\ChatGroupController;
 use App\Http\Controllers\FamilyController;
 use App\Http\Controllers\FamilyInvitationController;
 use App\Http\Controllers\JourneyController;
@@ -23,6 +24,8 @@ Route::get('/user', function (Request $request) {
 Route::prefix('auth')->group(function () {
     Route::post('login', [AuthController::class, 'login']);
     Route::post('register', [AuthController::class, 'register']);
+    Route::post('forgot-password', [AuthController::class, 'forgotPassword']);
+    Route::post('reset-password', [AuthController::class, 'resetPassword']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
 
     // Google OAuth
@@ -55,16 +58,32 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Feed (posts) y Memory Leaf — siempre con contexto de familia
     Route::prefix('families/{family}')->group(function () {
+        // Media del perfil del usuario autenticado en la familia seleccionada
+        Route::get('profile/media', [ProfileController::class, 'media']);
+
         // Chat directo entre miembros de la familia
         Route::get('chat/contacts', [ChatController::class, 'contacts']);
         Route::get('chat/conversations/{member}', [ChatController::class, 'conversation']);
         Route::post('chat/conversations/{member}', [ChatController::class, 'store']);
         Route::post('chat/conversations/{member}/typing', [ChatController::class, 'typing']);
+        Route::get('chat/groups', [ChatGroupController::class, 'index']);
+        Route::post('chat/groups', [ChatGroupController::class, 'store']);
+        Route::get('chat/groups/{group}/messages', [ChatGroupController::class, 'messages']);
+        Route::post('chat/groups/{group}/messages', [ChatGroupController::class, 'send']);
+        Route::post('chat/groups/{group}/typing', [ChatGroupController::class, 'typing']);
 
         // Posts del feed
         Route::get('posts', [PostController::class, 'index']);
         Route::post('posts', [PostController::class, 'store']);
         Route::delete('posts/{post}', [PostController::class, 'destroy']);
+        Route::post('posts/{post}/like', [PostController::class, 'toggleLike']);
+        Route::get('posts/{post}/likes', [PostController::class, 'likes']);
+        Route::get('posts/{post}/comments', [PostController::class, 'comments']);
+        Route::post('posts/{post}/comments', [PostController::class, 'addComment']);
+        Route::patch('posts/{post}/comments/{comment}', [PostController::class, 'updateComment']);
+        Route::delete('posts/{post}/comments/{comment}', [PostController::class, 'deleteComment']);
+        Route::post('posts/{post}/repost', [PostController::class, 'toggleRepost']);
+        Route::get('posts/{post}/reposts', [PostController::class, 'reposts']);
 
         // Memory Leaves
         Route::get('memory-leaves', [MemoryLeafController::class, 'index']);

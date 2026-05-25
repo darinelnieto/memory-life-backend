@@ -21,9 +21,11 @@ return [
 
     'allowed_origins' => [
         'http://localhost:9000',
+        'http://localhost:9002',
         'http://localhost:3000',
         'http://localhost:8080',
         'http://127.0.0.1:9000',
+        'http://127.0.0.1:9002',
         'https://tuwebdeboda.com',
         'https://www.tuwebdeboda.com',
         'https://memory-life-frontend-git-main-darinelnietos-projects.vercel.app',

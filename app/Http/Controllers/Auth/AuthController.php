@@ -7,7 +7,9 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\Rules\Password;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rules\Password as PasswordRule;
 
 class AuthController extends Controller
 {
@@ -46,7 +48,7 @@ class AuthController extends Controller
             'name'                  => 'required|string|max:255',
             'username'              => 'required|string|max:50|unique:users|alpha_dash',
             'email'                 => 'required|email|unique:users',
-            'password'              => ['required', 'confirmed', Password::min(8)],
+            'password'              => ['required', 'confirmed', PasswordRule::min(8)],
         ]);
 
         $user = User::create([
@@ -77,5 +79,50 @@ class AuthController extends Controller
         $request->user()->currentAccessToken()->delete();
 
         return response()->json(['message' => 'Sesión cerrada']);
+    }
+
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        Password::sendResetLink($request->only('email'));
+
+        // Always return a generic success response to avoid user enumeration.
+        return response()->json([
+            'message' => 'Si el correo existe, recibirás un enlace para restablecer tu contraseña.',
+        ]);
+    }
+
+    /**
+     * @throws ValidationException
+     */
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'token' => 'required|string',
+            'email' => 'required|email',
+            'password' => ['required', 'confirmed', PasswordRule::min(8)],
+        ]);
+
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function (User $user, string $password): void {
+                $user->forceFill([
+                    'password' => Hash::make($password),
+                ])->save();
+            }
+        );
+
+        if ($status !== Password::PASSWORD_RESET) {
+            throw ValidationException::withMessages([
+                'email' => [__($status)],
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Contraseña restablecida correctamente.',
+        ]);
     }
 }
