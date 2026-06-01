@@ -75,6 +75,7 @@ Route::middleware('auth:sanctum')->group(function () {
         // Posts del feed
         Route::get('posts', [PostController::class, 'index']);
         Route::post('posts', [PostController::class, 'store']);
+        Route::patch('posts/{post}', [PostController::class, 'update']);
         Route::delete('posts/{post}', [PostController::class, 'destroy']);
         Route::post('posts/{post}/like', [PostController::class, 'toggleLike']);
         Route::get('posts/{post}/likes', [PostController::class, 'likes']);

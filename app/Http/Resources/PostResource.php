@@ -37,6 +37,7 @@ class PostResource extends JsonResource
             'content'    => $this->content,
             'type'       => $this->type,
             'media_url'  => $this->media_url,
+            'media_urls' => $this->media_urls,
             'allow_comments' => (bool) $this->allow_comments,
             'allow_likes' => (bool) $this->allow_likes,
             'allow_reposts' => (bool) $this->allow_reposts,

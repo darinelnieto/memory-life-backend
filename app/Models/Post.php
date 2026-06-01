@@ -15,6 +15,7 @@ class Post extends Model
         'content',
         'type',
         'media_path',
+        'media_paths',
         'allow_comments',
         'allow_likes',
         'allow_reposts',
@@ -56,12 +57,22 @@ class Post extends Model
         return asset('storage/' . $this->media_path);
     }
 
+    public function getMediaUrlsAttribute(): array
+    {
+        if (is_array($this->media_paths) && count($this->media_paths) > 0) {
+            return array_map(fn ($path) => asset('storage/' . $path), $this->media_paths);
+        }
+
+        return $this->media_path ? [asset('storage/' . $this->media_path)] : [];
+    }
+
     protected function casts(): array
     {
         return [
             'allow_comments' => 'boolean',
             'allow_likes' => 'boolean',
             'allow_reposts' => 'boolean',
+            'media_paths' => 'array',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

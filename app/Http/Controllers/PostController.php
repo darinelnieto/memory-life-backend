@@ -9,8 +9,10 @@ use App\Models\Post;
 use App\Models\PostComment;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 class PostController extends Controller
 {
@@ -39,28 +41,84 @@ class PostController extends Controller
         $data = $request->validate([
             'content'   => 'nullable|string|max:2000',
             'type'      => 'required|in:text,photo,video',
-            'media'     => 'nullable|file|mimes:jpg,jpeg,png,webp,mp4,mov|max:51200|required_if:type,photo,video',
             'allow_comments' => 'sometimes|boolean',
             'allow_likes' => 'sometimes|boolean',
             'allow_reposts' => 'sometimes|boolean',
         ]);
 
-        $mediaPath = null;
-        if ($request->hasFile('media')) {
-            $mediaPath = $request->file('media')->store("posts/{$family->id}", 'public');
+        $mediaFiles = $this->extractMediaFiles($request);
+        if (in_array($data['type'], ['photo', 'video'], true) && count($mediaFiles) === 0) {
+            throw ValidationException::withMessages([
+                'media' => ['Debes adjuntar un archivo para este tipo de publicacion.'],
+            ]);
         }
+
+        if ($data['type'] === 'video' && count($mediaFiles) > 1) {
+            throw ValidationException::withMessages([
+                'media' => ['Solo se permite un video por publicacion.'],
+            ]);
+        }
+
+        $mediaPaths = [];
+        foreach ($mediaFiles as $file) {
+            $mediaPaths[] = $file->store("posts/{$family->id}", 'public');
+        }
+
+        $mediaPath = $mediaPaths[0] ?? null;
 
         $post = $family->posts()->create([
             'user_id'    => $request->user()->id,
             'content'    => $data['content'] ?? null,
             'type'       => $data['type'],
             'media_path' => $mediaPath,
+            'media_paths' => count($mediaPaths) > 0 ? $mediaPaths : null,
             'allow_comments' => $data['allow_comments'] ?? true,
             'allow_likes' => $data['allow_likes'] ?? true,
             'allow_reposts' => $data['allow_reposts'] ?? true,
         ]);
 
         return new PostResource($post->load('user'));
+    }
+
+    public function update(Request $request, Family $family, Post $post): PostResource
+    {
+        $this->assertMember($family, $request);
+        $this->assertPostBelongsToFamily($post, $family);
+        abort_unless($post->user_id === $request->user()->id || $family->owner_id === $request->user()->id, 403);
+
+        $data = $request->validate([
+            'content' => 'nullable|string|max:2000',
+            'allow_comments' => 'sometimes|boolean',
+            'allow_likes' => 'sometimes|boolean',
+            'allow_reposts' => 'sometimes|boolean',
+        ]);
+
+        $updateData = [];
+        if (array_key_exists('content', $data)) {
+            $updateData['content'] = $data['content'];
+        }
+        if (array_key_exists('allow_comments', $data)) {
+            $updateData['allow_comments'] = $data['allow_comments'];
+        }
+        if (array_key_exists('allow_likes', $data)) {
+            $updateData['allow_likes'] = $data['allow_likes'];
+        }
+        if (array_key_exists('allow_reposts', $data)) {
+            $updateData['allow_reposts'] = $data['allow_reposts'];
+        }
+
+        if (count($updateData) > 0) {
+            $post->update($updateData);
+        }
+
+        $post->load([
+            'user',
+            'likes' => fn ($q) => $q->where('user_id', $request->user()->id),
+            'reposts' => fn ($q) => $q->where('user_id', $request->user()->id),
+            'latestRepost.user',
+        ])->loadCount(['likes', 'comments', 'reposts']);
+
+        return new PostResource($post);
     }
 
     public function toggleLike(Request $request, Family $family, Post $post): JsonResponse
@@ -215,10 +273,54 @@ class PostController extends Controller
     public function destroy(Request $request, Family $family, Post $post): JsonResponse
     {
         abort_unless($post->user_id === $request->user()->id || $family->owner_id === $request->user()->id, 403);
-        if ($post->media_path) Storage::disk('public')->delete($post->media_path);
+
+        $paths = is_array($post->media_paths) ? $post->media_paths : [];
+        if (count($paths) === 0 && $post->media_path) {
+            $paths = [$post->media_path];
+        }
+
+        if (count($paths) > 0) {
+            Storage::disk('public')->delete($paths);
+        }
+
         $post->delete();
 
         return response()->json(['message' => 'Post eliminado']);
+    }
+
+    /**
+     * @return UploadedFile[]
+     */
+    private function extractMediaFiles(Request $request): array
+    {
+        if (!$request->hasFile('media')) {
+            return [];
+        }
+
+        $raw = $request->file('media');
+        $files = $raw instanceof UploadedFile ? [$raw] : (is_array($raw) ? $raw : []);
+
+        $validated = [];
+        foreach ($files as $file) {
+            if (!$file instanceof UploadedFile) {
+                continue;
+            }
+
+            $validator = validator(
+                ['file' => $file],
+                ['file' => 'file|mimes:jpg,jpeg,png,webp,mp4,mov|max:51200']
+            );
+
+            if ($validator->fails()) {
+                throw ValidationException::withMessages([
+                    'media' => $validator->errors()->all(),
+                ]);
+            }
+
+            $validated[] = $file;
+        }
+
+        return $validated;
     }
 
     private function assertMember(Family $family, Request $request): void
