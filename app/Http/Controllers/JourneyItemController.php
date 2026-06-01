@@ -14,7 +14,7 @@ class JourneyItemController extends Controller
     public function store(Request $request, Family $family, Journey $journey)
     {
         $data = $request->validate([
-            'type'       => 'required|in:text,photo,video,audio',
+            'type'       => 'required|in:text,photo,video,voice,audio',
             'content'    => 'nullable|string',
             'file'       => 'nullable|file|max:51200',
             'caption'    => 'nullable|string|max:500',
