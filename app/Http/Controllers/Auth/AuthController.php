@@ -7,9 +7,12 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rules\Password as PasswordRule;
+use Spatie\Permission\Models\Role;
+use Throwable;
 
 class AuthController extends Controller
 {
@@ -58,15 +61,27 @@ class AuthController extends Controller
             'password' => Hash::make($request->password),
         ]);
 
-        $user->assignRole('free');
+        try {
+            // Ensure default role exists in environments where seeders were not run.
+            Role::findOrCreate('free');
+            $user->assignRole('free');
+        } catch (Throwable $exception) {
+            // Do not fail registration if role metadata is misconfigured in production.
+            Log::warning('User registered without role assignment', [
+                'user_id' => $user->id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
 
         $token = $user->createToken('auth')->plainTextToken;
 
         return response()->json([
+            'message' => 'Cuenta creada correctamente.',
             'token' => $token,
             'user'  => [
                 'id'     => $user->id,
                 'name'   => $user->name,
+                'username' => $user->username,
                 'email'  => $user->email,
                 'avatar' => $user->avatar,
                 'roles'  => $user->getRoleNames(),
