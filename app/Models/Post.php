@@ -12,6 +12,7 @@ class Post extends Model
     protected $fillable = [
         'family_id',
         'user_id',
+        'repost_of_post_id',
         'content',
         'type',
         'media_path',
@@ -29,6 +30,11 @@ class Post extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function repostOf(): BelongsTo
+    {
+        return $this->belongsTo(Post::class, 'repost_of_post_id');
     }
 
     public function comments(): HasMany
@@ -49,6 +55,11 @@ class Post extends Model
     public function latestRepost(): HasOne
     {
         return $this->hasOne(PostRepost::class)->latestOfMany();
+    }
+
+    public function repostedPosts(): HasMany
+    {
+        return $this->hasMany(Post::class, 'repost_of_post_id');
     }
 
     public function getMediaUrlAttribute(): string|null

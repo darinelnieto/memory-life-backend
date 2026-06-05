@@ -7,6 +7,7 @@ use App\Http\Resources\PostResource;
 use App\Models\Family;
 use App\Models\Post;
 use App\Models\PostComment;
+use App\Models\PostRepost;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -26,6 +27,7 @@ class PostController extends Controller
                 'likes' => fn ($q) => $q->where('user_id', $request->user()->id),
                 'reposts' => fn ($q) => $q->where('user_id', $request->user()->id),
                 'latestRepost.user',
+                'repostOf.user',
             ])
             ->withCount(['likes', 'comments', 'reposts'])
             ->latest()
@@ -44,6 +46,9 @@ class PostController extends Controller
             'allow_comments' => 'sometimes|boolean',
             'allow_likes' => 'sometimes|boolean',
             'allow_reposts' => 'sometimes|boolean',
+            'publish_all_families' => 'sometimes|boolean',
+            'publish_family_ids' => 'sometimes|array|min:1',
+            'publish_family_ids.*' => 'integer',
         ]);
 
         $mediaFiles = $this->extractMediaFiles($request);
@@ -59,6 +64,51 @@ class PostController extends Controller
             ]);
         }
 
+        if (!empty($data['publish_family_ids'])) {
+            $requestedIds = collect($data['publish_family_ids'])
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+
+            $targetFamilies = Family::query()
+                ->whereIn('id', $requestedIds)
+                ->whereHas('familyMembers', fn ($q) => $q->where('user_id', $request->user()->id))
+                ->get();
+
+            if ($targetFamilies->count() !== $requestedIds->count()) {
+                throw ValidationException::withMessages([
+                    'publish_family_ids' => ['Hay familias seleccionadas donde no perteneces.'],
+                ]);
+            }
+        } elseif (!empty($data['publish_all_families'])) {
+            $targetFamilies = Family::query()
+                ->whereHas('familyMembers', fn ($q) => $q->where('user_id', $request->user()->id))
+                ->get();
+        } else {
+            $targetFamilies = collect([$family]);
+        }
+
+        $post = null;
+        foreach ($targetFamilies as $targetFamily) {
+            $created = $this->createPostForFamily($targetFamily, $request->user()->id, $data, $mediaFiles);
+
+            if ($targetFamily->id === $family->id) {
+                $post = $created;
+            }
+        }
+
+        if (!$post) {
+            $post = $this->createPostForFamily($family, $request->user()->id, $data, $mediaFiles);
+        }
+
+        return new PostResource($post->load('user'));
+    }
+
+    /**
+     * @param UploadedFile[] $mediaFiles
+     */
+    private function createPostForFamily(Family $family, int $userId, array $data, array $mediaFiles): Post
+    {
         $mediaPaths = [];
         foreach ($mediaFiles as $file) {
             $mediaPaths[] = $file->store("posts/{$family->id}", 'public');
@@ -66,18 +116,16 @@ class PostController extends Controller
 
         $mediaPath = $mediaPaths[0] ?? null;
 
-        $post = $family->posts()->create([
-            'user_id'    => $request->user()->id,
-            'content'    => $data['content'] ?? null,
-            'type'       => $data['type'],
+        return $family->posts()->create([
+            'user_id' => $userId,
+            'content' => $data['content'] ?? null,
+            'type' => $data['type'],
             'media_path' => $mediaPath,
             'media_paths' => count($mediaPaths) > 0 ? $mediaPaths : null,
             'allow_comments' => $data['allow_comments'] ?? true,
             'allow_likes' => $data['allow_likes'] ?? true,
             'allow_reposts' => $data['allow_reposts'] ?? true,
         ]);
-
-        return new PostResource($post->load('user'));
     }
 
     public function update(Request $request, Family $family, Post $post): PostResource
@@ -238,16 +286,54 @@ class PostController extends Controller
             return response()->json(['message' => 'El autor desactivó los reposts para esta publicación.'], 422);
         }
 
-        $existing = $post->reposts()->where('user_id', $request->user()->id)->first();
-        if ($existing) {
-            $existing->delete();
-        } else {
-            $post->reposts()->create(['user_id' => $request->user()->id]);
+        $existingRepost = $post->reposts()->where('user_id', $request->user()->id)->first();
+
+        if ($existingRepost) {
+            $visibleRepost = Post::query()
+                ->where('family_id', $family->id)
+                ->where('user_id', $request->user()->id)
+                ->where('repost_of_post_id', $post->id)
+                ->first();
+
+            if ($visibleRepost) {
+                $visibleRepost->delete();
+            }
+
+            $existingRepost->delete();
+
+            return response()->json([
+                'reposted' => false,
+                'reposts_count' => $post->reposts()->count(),
+                'repost_id' => $visibleRepost?->id,
+            ]);
         }
 
+        $post->reposts()->create(['user_id' => $request->user()->id]);
+
+        $visibleRepost = $family->posts()->create([
+            'user_id' => $request->user()->id,
+            'repost_of_post_id' => $post->id,
+            'content' => $post->content,
+            'type' => $post->type,
+            'media_path' => $post->media_path,
+            'media_paths' => $post->media_paths,
+            'allow_comments' => $post->allow_comments,
+            'allow_likes' => $post->allow_likes,
+            'allow_reposts' => $post->allow_reposts,
+        ]);
+
+        $visibleRepost->load([
+            'user',
+            'repostOf.user',
+            'likes' => fn ($q) => $q->where('user_id', $request->user()->id),
+            'reposts' => fn ($q) => $q->where('user_id', $request->user()->id),
+            'latestRepost.user',
+        ])->loadCount(['likes', 'comments', 'reposts']);
+
         return response()->json([
-            'reposted' => !$existing,
+            'reposted' => true,
             'reposts_count' => $post->reposts()->count(),
+            'repost' => (new PostResource($visibleRepost))->resolve($request),
         ]);
     }
 
@@ -273,6 +359,13 @@ class PostController extends Controller
     public function destroy(Request $request, Family $family, Post $post): JsonResponse
     {
         abort_unless($post->user_id === $request->user()->id || $family->owner_id === $request->user()->id, 403);
+
+        if ($post->repost_of_post_id) {
+            PostRepost::query()
+                ->where('post_id', $post->repost_of_post_id)
+                ->where('user_id', $post->user_id)
+                ->delete();
+        }
 
         $paths = is_array($post->media_paths) ? $post->media_paths : [];
         if (count($paths) === 0 && $post->media_path) {

@@ -27,10 +27,14 @@ php artisan migrate
 ## Comandos utiles
 
 ```bash
+php artisan optimize:clear
+composer run dev
 php artisan serve
 php artisan migrate
 php artisan test
 ```
+
+Recomendado para desarrollo diario: `composer run dev` (evita errores manuales al escribir comandos y levanta servicios auxiliares).
 
 ## Endpoints de autenticacion
 

@@ -32,6 +32,17 @@ class PostResource extends JsonResource
             ]
             : null;
 
+        $repostOf = $this->relationLoaded('repostOf') && $this->repostOf
+            ? [
+                'id' => $this->repostOf->id,
+                'author' => [
+                    'id' => $this->repostOf->user->id,
+                    'name' => $this->repostOf->user->name,
+                    'avatar_url' => $this->repostOf->user->avatar_url,
+                ],
+            ]
+            : null;
+
         return [
             'id'         => $this->id,
             'content'    => $this->content,
@@ -41,6 +52,8 @@ class PostResource extends JsonResource
             'allow_comments' => (bool) $this->allow_comments,
             'allow_likes' => (bool) $this->allow_likes,
             'allow_reposts' => (bool) $this->allow_reposts,
+            'is_repost' => (bool) $this->repost_of_post_id,
+            'repost_of' => $repostOf,
             'likes_count' => $likesCount,
             'comments_count' => $commentsCount,
             'reposts_count' => $repostsCount,

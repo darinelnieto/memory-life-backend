@@ -56,6 +56,12 @@ class PostInteractionsFlowTest extends TestCase
             'user_id' => $member->id,
         ]);
 
+        $feed = $this->getJson("/api/families/{$family->id}/posts");
+        $feed->assertOk();
+        $feed->assertJsonPath('data.0.is_repost', true);
+        $feed->assertJsonPath('data.0.repost_of.id', $post->id);
+        $feed->assertJsonPath('data.0.author.id', $member->id);
+
         $undoRepost = $this->postJson("/api/families/{$family->id}/posts/{$post->id}/repost");
         $undoRepost->assertOk();
         $undoRepost->assertJsonPath('reposted', false);
@@ -64,6 +70,10 @@ class PostInteractionsFlowTest extends TestCase
             'post_id' => $post->id,
             'user_id' => $member->id,
         ]);
+
+        $feedAfterUndo = $this->getJson("/api/families/{$family->id}/posts");
+        $feedAfterUndo->assertOk();
+        $feedAfterUndo->assertJsonPath('data.0.id', $post->id);
     }
 
     public function test_user_can_create_comment_when_comments_are_enabled(): void
