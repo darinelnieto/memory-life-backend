@@ -43,6 +43,11 @@ class Family extends Model
         return $this->hasMany(Journey::class);
     }
 
+    public function treeMembers(): HasMany
+    {
+        return $this->hasMany(TreeMember::class);
+    }
+
     public function getMemberCountAttribute(): int
     {
         return $this->familyMembers()->count();

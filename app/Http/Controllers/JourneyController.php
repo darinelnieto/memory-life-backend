@@ -27,7 +27,16 @@ class JourneyController extends Controller
             'title'       => 'required|string|max:255',
             'description' => 'nullable|string',
             'cover'       => 'nullable|image|max:5120',
+            'tree_member_id' => 'nullable|integer|exists:tree_members,id',
         ]);
+
+        if (!empty($data['tree_member_id'])) {
+            $belongsToFamily = $family->treeMembers()
+                ->where('id', $data['tree_member_id'])
+                ->exists();
+
+            abort_unless($belongsToFamily, 422, 'El miembro no pertenece a esta familia.');
+        }
 
         $coverPath = null;
         if ($request->hasFile('cover')) {
@@ -39,6 +48,7 @@ class JourneyController extends Controller
 
         $journey = $family->journeys()->create([
             'user_id'     => $request->user()->id,
+            'tree_member_id' => $data['tree_member_id'] ?? null,
             'title'       => $data['title'],
             'description' => $data['description'] ?? null,
             'cover_path'  => $coverPath,
@@ -51,12 +61,20 @@ class JourneyController extends Controller
 
     public function show(Family $family, Journey $journey)
     {
-        $journey->load('user', 'items');
+        $journey->load([
+            'user',
+            'items' => fn ($q) => $q->latest()->with([
+                'sourcePost' => fn ($pq) => $pq->with('user')->withCount(['likes', 'comments', 'reposts']),
+            ]),
+        ]);
         return new JourneyResource($journey);
     }
 
     public function destroy(Family $family, Journey $journey)
     {
+        abort_unless($journey->family_id === $family->id, 404);
+        abort_unless($journey->user_id === request()->user()->id, 403, 'Solo quien creo el journey puede eliminarlo.');
+
         if ($journey->cover_path) {
             Storage::disk('public')->delete($journey->cover_path);
         }

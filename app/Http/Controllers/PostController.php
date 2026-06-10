@@ -46,6 +46,7 @@ class PostController extends Controller
             'allow_comments' => 'sometimes|boolean',
             'allow_likes' => 'sometimes|boolean',
             'allow_reposts' => 'sometimes|boolean',
+            'show_on_profile' => 'sometimes|boolean',
             'publish_all_families' => 'sometimes|boolean',
             'publish_family_ids' => 'sometimes|array|min:1',
             'publish_family_ids.*' => 'integer',
@@ -125,6 +126,7 @@ class PostController extends Controller
             'allow_comments' => $data['allow_comments'] ?? true,
             'allow_likes' => $data['allow_likes'] ?? true,
             'allow_reposts' => $data['allow_reposts'] ?? true,
+            'show_on_profile' => $data['show_on_profile'] ?? true,
         ]);
     }
 
@@ -320,6 +322,7 @@ class PostController extends Controller
             'allow_comments' => $post->allow_comments,
             'allow_likes' => $post->allow_likes,
             'allow_reposts' => $post->allow_reposts,
+            'show_on_profile' => $post->show_on_profile,
         ]);
 
         $visibleRepost->load([
@@ -379,6 +382,35 @@ class PostController extends Controller
         $post->delete();
 
         return response()->json(['message' => 'Post eliminado']);
+    }
+
+    public function downloadMedia(Request $request, Family $family, Post $post): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        $this->assertMember($family, $request);
+        $this->assertPostBelongsToFamily($post, $family);
+
+        $index = (int) $request->query('index', 0);
+
+        $paths = is_array($post->media_paths) ? $post->media_paths : [];
+        if (count($paths) === 0 && $post->media_path) {
+            $paths = [$post->media_path];
+        }
+
+        $path = $paths[$index] ?? null;
+        abort_if(!$path || !Storage::disk('public')->exists($path), 404, 'Media not found');
+
+        $mimeType = Storage::disk('public')->mimeType($path);
+
+        return response()->streamDownload(
+            function () use ($path) {
+                echo Storage::disk('public')->get($path);
+            },
+            basename($path),
+            [
+                'Content-Type' => $mimeType ?: 'application/octet-stream',
+                'Content-Length' => Storage::disk('public')->size($path),
+            ]
+        );
     }
 
     /**

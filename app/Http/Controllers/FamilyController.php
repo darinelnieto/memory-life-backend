@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class FamilyController extends Controller
@@ -27,12 +28,19 @@ class FamilyController extends Controller
         $data = $request->validate([
             'name'    => 'required|string|max:255',
             'surname' => 'required|string|max:100',
+            'cover'   => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:20480',
         ]);
 
         $family = Family::create([
-            ...$data,
+            'name' => $data['name'],
+            'surname' => $data['surname'],
             'owner_id' => $request->user()->id,
         ]);
+
+        if ($request->hasFile('cover')) {
+            $path = $request->file('cover')->store("families/{$family->id}", 'public');
+            $family->update(['cover_photo' => $path]);
+        }
 
         $family->members()->attach($request->user()->id, [
             'role'      => 'owner',
@@ -61,6 +69,26 @@ class FamilyController extends Controller
         $family->update($data);
 
         return new FamilyResource($family->load('familyMembers'));
+    }
+
+    public function uploadCover(Request $request, Family $family): JsonResponse
+    {
+        $this->authorizeManager($family, $request);
+
+        $request->validate([
+            'cover' => 'required|file|mimes:jpg,jpeg,png,webp,heic,heif|max:20480',
+        ]);
+
+        if ($family->cover_photo) {
+            Storage::disk('public')->delete($family->cover_photo);
+        }
+
+        $path = $request->file('cover')->store("families/{$family->id}", 'public');
+        $family->update(['cover_photo' => $path]);
+
+        return response()->json([
+            'data' => new FamilyResource($family->fresh()->loadCount('familyMembers')->load('familyMembers')),
+        ]);
     }
 
     public function addMember(Request $request, Family $family): JsonResponse

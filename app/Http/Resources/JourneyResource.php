@@ -12,6 +12,7 @@ class JourneyResource extends JsonResource
         return [
             'id'          => $this->id,
             'family_id'   => $this->family_id,
+            'tree_member_id' => $this->tree_member_id,
             'title'       => $this->title,
             'description' => $this->description,
             'cover_url'   => $this->cover_url,
@@ -20,7 +21,7 @@ class JourneyResource extends JsonResource
             'author'      => [
                 'id'     => $this->user->id,
                 'name'   => $this->user->name,
-                'avatar' => $this->user->avatar_url ?? null,
+                'avatar_url' => $this->user->avatar_url ?? null,
             ],
             'created_at'  => $this->created_at,
         ];

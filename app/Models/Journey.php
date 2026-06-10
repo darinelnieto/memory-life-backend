@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Journey extends Model
 {
-    protected $fillable = ['family_id', 'user_id', 'title', 'description', 'cover_path'];
+    protected $fillable = ['family_id', 'user_id', 'tree_member_id', 'title', 'description', 'cover_path'];
 
     public function family(): BelongsTo
     {
@@ -18,6 +18,11 @@ class Journey extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function treeMember(): BelongsTo
+    {
+        return $this->belongsTo(TreeMember::class);
     }
 
     public function items(): HasMany

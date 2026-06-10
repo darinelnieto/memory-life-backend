@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Family;
 use App\Models\Post;
+use App\Models\User;
 use App\Http\Resources\ProfileResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -12,9 +13,41 @@ use Illuminate\Validation\Rule;
 
 class ProfileController extends Controller
 {
+    private function transformProfileMediaPost(Post $post): array
+    {
+        return [
+            'id' => $post->id,
+            'type' => $post->type,
+            'url' => $post->media_url,
+            'urls' => $post->media_urls,
+            'content' => $post->content,
+            'created_at' => $post->created_at?->toISOString(),
+            'likes_count' => (int) ($post->likes_count ?? 0),
+            'comments_count' => (int) ($post->comments_count ?? 0),
+            'reposts_count' => (int) ($post->reposts_count ?? 0),
+        ];
+    }
+
     public function show(Request $request): JsonResponse
     {
         return response()->json(['data' => new ProfileResource($request->user())]);
+    }
+
+    public function showByUser(Request $request, Family $family, User $user): JsonResponse
+    {
+        abort_unless(
+            $family->familyMembers()->where('user_id', $request->user()->id)->exists(),
+            403,
+            'No tienes acceso a esta familia'
+        );
+
+        abort_unless(
+            $family->familyMembers()->where('user_id', $user->id)->exists(),
+            404,
+            'El usuario no pertenece a esta familia'
+        );
+
+        return response()->json(['data' => new ProfileResource($user)]);
     }
 
     public function update(Request $request): JsonResponse
@@ -87,25 +120,47 @@ class ProfileController extends Controller
             ->where('user_id', $request->user()->id)
             ->whereNotNull('media_path')
             ->whereIn('type', ['photo', 'video'])
-            ->withCount(['likes', 'comments'])
+            ->where('show_on_profile', true)
+            ->withCount(['likes', 'comments', 'reposts'])
             ->latest()
             ->get();
 
-        $transform = static function (Post $post): array {
-            return [
-                'id' => $post->id,
-                'url' => $post->media_url,
-                'created_at' => $post->created_at?->toISOString(),
-                'caption' => $post->content,
-                'likes_count' => (int) ($post->likes_count ?? 0),
-                'comments_count' => (int) ($post->comments_count ?? 0),
-            ];
-        };
+        return response()->json([
+            'data' => [
+                'photos' => $posts->where('type', 'photo')->values()->map(fn (Post $post) => $this->transformProfileMediaPost($post))->all(),
+                'videos' => $posts->where('type', 'video')->values()->map(fn (Post $post) => $this->transformProfileMediaPost($post))->all(),
+            ],
+        ]);
+    }
+
+    public function mediaByUser(Request $request, Family $family, User $user): JsonResponse
+    {
+        abort_unless(
+            $family->familyMembers()->where('user_id', $request->user()->id)->exists(),
+            403,
+            'No tienes acceso a esta familia'
+        );
+
+        abort_unless(
+            $family->familyMembers()->where('user_id', $user->id)->exists(),
+            404,
+            'El usuario no pertenece a esta familia'
+        );
+
+        $posts = Post::query()
+            ->where('family_id', $family->id)
+            ->where('user_id', $user->id)
+            ->whereNotNull('media_path')
+            ->whereIn('type', ['photo', 'video'])
+            ->where('show_on_profile', true)
+            ->withCount(['likes', 'comments', 'reposts'])
+            ->latest()
+            ->get();
 
         return response()->json([
             'data' => [
-                'photos' => $posts->where('type', 'photo')->values()->map($transform)->all(),
-                'videos' => $posts->where('type', 'video')->values()->map($transform)->all(),
+                'photos' => $posts->where('type', 'photo')->values()->map(fn (Post $post) => $this->transformProfileMediaPost($post))->all(),
+                'videos' => $posts->where('type', 'video')->values()->map(fn (Post $post) => $this->transformProfileMediaPost($post))->all(),
             ],
         ]);
     }

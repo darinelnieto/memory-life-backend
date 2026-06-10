@@ -20,6 +20,7 @@ class Post extends Model
         'allow_comments',
         'allow_likes',
         'allow_reposts',
+        'show_on_profile',
     ];
 
     public function family(): BelongsTo
@@ -83,6 +84,7 @@ class Post extends Model
             'allow_comments' => 'boolean',
             'allow_likes' => 'boolean',
             'allow_reposts' => 'boolean',
+            'show_on_profile' => 'boolean',
             'media_paths' => 'array',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',

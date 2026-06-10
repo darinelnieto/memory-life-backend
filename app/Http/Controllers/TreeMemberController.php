@@ -3,11 +3,20 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\TreeMemberResource;
+use App\Http\Resources\JourneyResource;
 use App\Models\Family;
+use App\Models\FamilyInvitation;
+use App\Models\Journey;
 use App\Models\TreeMember;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use App\Notifications\MemberAccountInvitationNotification;
 
 class TreeMemberController extends Controller
 {
@@ -26,6 +35,7 @@ class TreeMemberController extends Controller
         $roots = TreeMember::with(['children.spouse', 'children.children', 'spouse'])
             ->where('family_id', $family->id)
             ->whereNull('parent_id')
+            ->whereNotIn('invite_status', ['pending', 'rejected', 'cancelled'])
             ->whereNotIn('id', $spouseIds)
             ->get();
 
@@ -37,9 +47,114 @@ class TreeMemberController extends Controller
     {
         $this->authorizeFamily($family);
 
-        $members = TreeMember::where('family_id', $family->id)->get();
+        $members = TreeMember::where('family_id', $family->id)
+            ->whereNotIn('invite_status', ['pending', 'rejected', 'cancelled'])
+            ->get();
 
         return TreeMemberResource::collection($members);
+    }
+
+    public function outgoingRequests(Request $request): JsonResponse
+    {
+        $requests = TreeMember::query()
+            ->with('family:id,name,surname')
+            ->where('created_by', $request->user()->id)
+            ->whereNotNull('app_user_email')
+            ->whereIn('invite_status', ['pending', 'accepted', 'rejected', 'cancelled'])
+            ->latest()
+            ->take(50)
+            ->get();
+
+        return response()->json([
+            'data' => $requests->map(fn (TreeMember $member) => [
+                'id' => $member->id,
+                'family_id' => $member->family_id,
+                'family_name' => $member->family?->name,
+                'family_surname' => $member->family?->surname,
+                'first_name' => $member->first_name,
+                'last_name' => $member->last_name,
+                'email' => $member->app_user_email,
+                'relationship' => $member->relationship,
+                'invite_status' => $member->invite_status,
+                'updated_at' => $member->updated_at?->toISOString(),
+                'created_at' => $member->created_at?->toISOString(),
+            ]),
+        ]);
+    }
+
+    public function cancelOutgoingRequest(Request $request, Family $family, TreeMember $member): JsonResponse
+    {
+        $this->authorizeFamily($family);
+        abort_if($member->family_id !== $family->id, 403);
+        abort_if($member->created_by !== $request->user()->id, 403, 'Solo el solicitante puede cancelar.');
+        abort_if($member->invite_status !== 'pending', 422, 'La solicitud ya no esta pendiente.');
+
+        $member->update(['invite_status' => 'cancelled']);
+
+        if ($member->app_user_email) {
+            FamilyInvitation::query()
+                ->where('family_id', $family->id)
+                ->where('email', strtolower($member->app_user_email))
+                ->where('status', 'pending')
+                ->where('expires_at', '>', now())
+                ->update(['status' => 'cancelled']);
+        }
+
+        return response()->json(['message' => 'Solicitud cancelada.']);
+    }
+
+    public function profile(Request $request, Family $family, TreeMember $member): JsonResponse
+    {
+        $this->authorizeFamily($family);
+        abort_if($member->family_id !== $family->id, 403);
+
+        $journeys = Journey::query()
+            ->where('family_id', $family->id)
+            ->where(function ($query) use ($member) {
+                $query->where('tree_member_id', $member->id);
+
+                if ($member->user_id) {
+                    $query->orWhere('user_id', $member->user_id);
+                }
+            })
+            ->with('user')
+            ->withCount('items')
+            ->latest()
+            ->get();
+
+        return response()->json([
+            'data' => [
+                'member' => new TreeMemberResource($member->load('spouse')),
+                'journeys' => JourneyResource::collection($journeys),
+            ],
+        ]);
+    }
+
+    public function sendAccountInvitation(Request $request, Family $family, TreeMember $member): JsonResponse
+    {
+        $this->authorizeFamily($family);
+        abort_if($member->family_id !== $family->id, 403);
+        abort_if($member->user_id !== null, 422, 'Este miembro ya tiene una cuenta vinculada.');
+
+        $data = $request->validate([
+            'email' => 'required|email|max:255',
+        ]);
+
+        $email = strtolower(trim($data['email']));
+        abort_if($email === '', 422, 'Debes ingresar un correo valido.');
+        abort_if(User::query()->where('email', $email)->exists(), 422, 'Ese correo ya tiene cuenta. Usa la invitacion para cuenta existente.');
+
+        $invitation = $this->createFamilyInvitationByEmail($family, $request->user()->id, $email);
+
+        $member->update([
+            'app_user_email' => $email,
+            'invite_status' => 'pending',
+        ]);
+
+        Notification::route('mail', $email)
+            ->notify(new MemberAccountInvitationNotification($invitation->token, $family, $member));
+
+        return response()->json(['message' => 'Invitacion enviada al correo para crear la cuenta.']);
     }
 
     public function store(Request $request, Family $family): TreeMemberResource
@@ -47,10 +162,12 @@ class TreeMemberController extends Controller
         $this->authorizeFamily($family);
 
         $data = $request->validate([
-            'first_name'   => 'required|string|max:100',
-            'last_name'    => 'required|string|max:100',
+            'first_name'   => 'nullable|required_without_all:use_my_profile,has_app_user|string|max:100',
+            'last_name'    => 'nullable|required_without_all:use_my_profile,has_app_user|string|max:100',
             'relationship' => 'nullable|string|max:80',
             'gender'       => 'nullable|in:male,female,other',
+            'avatar'       => 'nullable|file|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'cover'        => 'nullable|file|image|mimes:jpg,jpeg,png,webp|max:5120',
             'parent_id'    => 'nullable|integer|exists:tree_members,id',
             'spouse_id'    => 'nullable|integer|exists:tree_members,id',
             'user_id'      => 'nullable|integer|exists:users,id',
@@ -58,13 +175,83 @@ class TreeMemberController extends Controller
             'death_date'   => 'nullable|date|after_or_equal:birth_date',
             'bio'          => 'nullable|string|max:1000',
             'is_deceased'  => 'boolean',
+            'photos'       => 'nullable|array|max:8',
+            'photos.*'     => 'file|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'video'        => 'nullable|file|mimes:mp4,mov,webm|max:51200',
+            'has_app_user' => 'boolean',
+            'app_user_email' => 'nullable|email|max:255|required_if:has_app_user,1',
+            'use_my_profile' => 'boolean',
+            'create_account' => 'boolean',
+            'account_email' => 'nullable|email|max:255|required_if:create_account,1',
+            'account_password' => 'nullable|string|min:8|required_if:create_account,1',
+            'send_invitation' => 'boolean',
         ]);
 
+        $useMyProfile = (bool) ($data['use_my_profile'] ?? false);
+        $selfUser = $useMyProfile ? $request->user() : null;
+
+        $createdAccountUser = $useMyProfile ? null : $this->createAppAccountForMemberIfRequested($data);
+        $invitee = $selfUser ?? $createdAccountUser ?? $this->resolveInvitee($family, $data);
+        $this->ensureSingleLinkedMemberPerUser($family->id, $invitee?->id, null);
+
+        [$selfFirstName, $selfLastName] = $selfUser ? $this->splitUserName($selfUser) : ['', ''];
+        [$inviteeFirstName, $inviteeLastName] = $invitee ? $this->splitUserName($invitee) : ['', ''];
+        $shouldUseInviteeProfile = !$useMyProfile && $invitee && !$createdAccountUser;
+        $shouldLinkUserNow = $useMyProfile;
+        $firstName = $useMyProfile ? $selfFirstName : (string) ($data['first_name'] ?? '');
+        $lastName = $useMyProfile ? $selfLastName : (string) ($data['last_name'] ?? '');
+        if ($shouldUseInviteeProfile) {
+            $firstName = $inviteeFirstName;
+            $lastName = $inviteeLastName;
+        }
+
+        $avatarPath = $this->storeMemberAvatar($request, $family);
+        $coverPath = $this->storeMemberCover($request, $family);
+        $avatarValue = $avatarPath
+            ?? ($useMyProfile ? $selfUser?->avatar : null)
+            ?? ($shouldUseInviteeProfile ? $invitee?->avatar : null);
+        $photoPaths = $this->storeMemberPhotos($request, $family);
+        $videoPath = $this->storeMemberVideo($request, $family);
+
         $member = TreeMember::create([
-            ...$data,
+            ...collect($data)->except([
+                'first_name',
+                'last_name',
+                'avatar',
+                'cover',
+                'photos',
+                'video',
+                'has_app_user',
+                'use_my_profile',
+                'create_account',
+                'account_email',
+                'account_password',
+                'send_invitation',
+            ])->all(),
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'user_id'    => $shouldLinkUserNow ? ($invitee?->id ?? ($data['user_id'] ?? null)) : null,
+            'app_user_email' => $invitee?->email ?? ($data['account_email'] ?? null) ?? ($data['app_user_email'] ?? null),
+            'avatar'     => $avatarValue,
+            'cover'      => $coverPath,
+            'media_photos' => $photoPaths,
+            'media_video' => $videoPath,
             'family_id'  => $family->id,
             'created_by' => $request->user()->id,
         ]);
+
+        if ($createdAccountUser && $avatarPath && !$createdAccountUser->avatar) {
+            $createdAccountUser->update(['avatar' => $avatarPath]);
+        }
+
+        $shouldRequireAcceptance = !$useMyProfile && (bool) $invitee;
+        $inviteStatus = $shouldRequireAcceptance ? 'pending' : 'none';
+
+        $member->update(['invite_status' => $inviteStatus]);
+
+        if ($invitee && !$useMyProfile) {
+            $this->createFamilyInvitationIfNeeded($family, $request->user()->id, $invitee);
+        }
 
         // If assigned as spouse, link back bidirectionally
         if (!empty($data['spouse_id'])) {
@@ -82,10 +269,12 @@ class TreeMemberController extends Controller
         abort_if($member->family_id !== $family->id, 403);
 
         $data = $request->validate([
-            'first_name'   => 'sometimes|string|max:100',
-            'last_name'    => 'sometimes|string|max:100',
+            'first_name'   => 'sometimes|nullable|string|max:100',
+            'last_name'    => 'sometimes|nullable|string|max:100',
             'relationship' => 'nullable|string|max:80',
             'gender'       => 'nullable|in:male,female,other',
+            'avatar'       => 'nullable|file|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'cover'        => 'nullable|file|image|mimes:jpg,jpeg,png,webp|max:5120',
             'parent_id'    => 'nullable|integer|exists:tree_members,id',
             'spouse_id'    => 'nullable|integer|exists:tree_members,id',
             'user_id'      => 'nullable|integer|exists:users,id',
@@ -93,10 +282,97 @@ class TreeMemberController extends Controller
             'death_date'   => 'nullable|date',
             'bio'          => 'nullable|string|max:1000',
             'is_deceased'  => 'boolean',
+            'photos'       => 'nullable|array|max:8',
+            'photos.*'     => 'file|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'video'        => 'nullable|file|mimes:mp4,mov,webm|max:51200',
+            'clear_video'  => 'boolean',
+            'has_app_user' => 'boolean',
+            'app_user_email' => 'nullable|email|max:255',
+            'use_my_profile' => 'boolean',
+            'create_account' => 'boolean',
+            'account_email' => 'nullable|email|max:255|required_if:create_account,1',
+            'account_password' => 'nullable|string|min:8|required_if:create_account,1',
+            'send_invitation' => 'boolean',
         ]);
 
+        $useMyProfile = (bool) ($data['use_my_profile'] ?? false);
+        $selfUser = $useMyProfile ? $request->user() : null;
+        $createdAccountUser = $useMyProfile ? null : $this->createAppAccountForMemberIfRequested($data);
+        $invitee = $selfUser ?? $createdAccountUser ?? $this->resolveInvitee($family, $data);
+        $this->ensureSingleLinkedMemberPerUser($family->id, $invitee?->id, $member->id);
+        $shouldUseInviteeProfile = !$useMyProfile && $invitee && !$createdAccountUser;
+        $shouldLinkUserNow = $useMyProfile;
+
+        $payload = collect($data)
+            ->except([
+                'avatar',
+                'cover',
+                'photos',
+                'video',
+                'clear_video',
+                'has_app_user',
+                'use_my_profile',
+                'create_account',
+                'account_email',
+                'account_password',
+                'send_invitation',
+            ])
+            ->all();
+
+        if ($invitee) {
+            $payload['user_id'] = $shouldLinkUserNow ? $invitee->id : null;
+            $payload['app_user_email'] = $invitee->email;
+            $payload['invite_status'] = $shouldLinkUserNow ? 'accepted' : 'pending';
+
+            if (!$useMyProfile) {
+                $this->createFamilyInvitationIfNeeded($family, $request->user()->id, $invitee);
+            }
+        }
+
+        if ($useMyProfile && $selfUser) {
+            [$firstName, $lastName] = $this->splitUserName($selfUser);
+            $payload['first_name'] = $firstName;
+            $payload['last_name'] = $lastName;
+            $payload['invite_status'] = 'accepted';
+
+            if (!$request->hasFile('avatar')) {
+                $payload['avatar'] = $selfUser->avatar;
+            }
+        } elseif ($shouldUseInviteeProfile && $invitee) {
+            [$firstName, $lastName] = $this->splitUserName($invitee);
+            $payload['first_name'] = $firstName;
+            $payload['last_name'] = $lastName;
+
+            if (!$request->hasFile('avatar')) {
+                $payload['avatar'] = $invitee->avatar;
+            }
+        }
+
+        if ($request->hasFile('avatar')) {
+            $this->deleteAvatar($member->avatar);
+            $payload['avatar'] = $this->storeMemberAvatar($request, $family);
+        }
+
+        if ($request->hasFile('cover')) {
+            $this->deleteCover($member->cover);
+            $payload['cover'] = $this->storeMemberCover($request, $family);
+        }
+
+        if ($request->hasFile('photos')) {
+            $this->deleteMediaPhotos($member->media_photos ?? []);
+            $payload['media_photos'] = $this->storeMemberPhotos($request, $family);
+        }
+
+        if ($request->hasFile('video')) {
+            $this->deleteMediaVideo($member->media_video);
+            $payload['media_video'] = $this->storeMemberVideo($request, $family);
+        } elseif (!empty($data['clear_video'])) {
+            $this->deleteMediaVideo($member->media_video);
+            $payload['media_video'] = null;
+        }
+
         $oldSpouseId = $member->spouse_id;
-        $member->update($data);
+        $member->update($payload);
 
         // Clear old back-link if spouse changed
         if ($oldSpouseId && $oldSpouseId !== ($data['spouse_id'] ?? null)) {
@@ -117,10 +393,23 @@ class TreeMemberController extends Controller
         $this->authorizeFamily($family);
         abort_if($member->family_id !== $family->id, 403);
 
+        if ($member->invite_status === 'pending' && $member->app_user_email) {
+            FamilyInvitation::query()
+                ->where('family_id', $family->id)
+                ->where('email', strtolower($member->app_user_email))
+                ->where('status', 'pending')
+                ->where('expires_at', '>', now())
+                ->update(['status' => 'cancelled']);
+        }
+
         // Clear spouse link
         if ($member->spouse_id) {
             TreeMember::where('id', $member->spouse_id)->update(['spouse_id' => null]);
         }
+
+        $this->deleteMediaPhotos($member->media_photos ?? []);
+        $this->deleteMediaVideo($member->media_video);
+        $this->deleteCover($member->cover);
 
         $member->delete();
 
@@ -173,5 +462,209 @@ class TreeMemberController extends Controller
             403,
             'No tienes acceso a esta familia'
         );
+    }
+
+    private function storeMemberPhotos(Request $request, Family $family): array
+    {
+        if (!$request->hasFile('photos')) {
+            return [];
+        }
+
+        $paths = [];
+        foreach ($request->file('photos') as $photoFile) {
+            $paths[] = $photoFile->store("tree-members/{$family->id}/photos", 'public');
+        }
+
+        return $paths;
+    }
+
+    private function storeMemberAvatar(Request $request, Family $family): ?string
+    {
+        if (!$request->hasFile('avatar')) {
+            return null;
+        }
+
+        return $request->file('avatar')->store("tree-members/{$family->id}/avatars", 'public');
+    }
+
+    private function storeMemberCover(Request $request, Family $family): ?string
+    {
+        if (!$request->hasFile('cover')) {
+            return null;
+        }
+
+        return $request->file('cover')->store("tree-members/{$family->id}/covers", 'public');
+    }
+
+    private function storeMemberVideo(Request $request, Family $family): ?string
+    {
+        if (!$request->hasFile('video')) {
+            return null;
+        }
+
+        return $request->file('video')->store("tree-members/{$family->id}/videos", 'public');
+    }
+
+    private function deleteMediaPhotos(array $paths): void
+    {
+        if (empty($paths)) {
+            return;
+        }
+
+        Storage::disk('public')->delete($paths);
+    }
+
+    private function deleteMediaVideo(?string $path): void
+    {
+        if (!$path) {
+            return;
+        }
+
+        Storage::disk('public')->delete($path);
+    }
+
+    private function deleteAvatar(?string $path): void
+    {
+        if (!$path || str_starts_with($path, 'http')) {
+            return;
+        }
+
+        Storage::disk('public')->delete($path);
+    }
+
+    private function deleteCover(?string $path): void
+    {
+        if (!$path || str_starts_with($path, 'http')) {
+            return;
+        }
+
+        Storage::disk('public')->delete($path);
+    }
+
+    private function createAppAccountForMemberIfRequested(array $data): ?User
+    {
+        $createAccount = (bool) ($data['create_account'] ?? false);
+        $email = strtolower(trim((string) ($data['account_email'] ?? '')));
+
+        if (!$createAccount) {
+            return null;
+        }
+
+        abort_if($email === '', 422, 'Debes indicar un correo para crear la cuenta.');
+        abort_if(
+            User::where('email', $email)->exists(),
+            422,
+            'Ya existe un usuario registrado con ese correo. Usa la opción de cuenta existente.'
+        );
+
+        $password = (string) ($data['account_password'] ?? '');
+        abort_if($password === '', 422, 'Debes indicar una contraseña para crear la cuenta.');
+
+        $firstName = trim((string) ($data['first_name'] ?? ''));
+        $lastName = trim((string) ($data['last_name'] ?? ''));
+        $name = trim($firstName . ' ' . $lastName);
+
+        return User::create([
+            'name' => $name !== '' ? $name : $email,
+            'email' => $email,
+            'password' => Hash::make($password),
+        ]);
+    }
+
+    private function splitUserName(User $user): array
+    {
+        $clean = trim((string) $user->name);
+        if ($clean === '') {
+            return ['Mi', 'Perfil'];
+        }
+
+        $parts = preg_split('/\s+/', $clean) ?: [];
+        $firstName = array_shift($parts) ?? 'Mi';
+        $lastName = count($parts) > 0 ? implode(' ', $parts) : 'Perfil';
+
+        return [$firstName, $lastName];
+    }
+
+    private function ensureSingleLinkedMemberPerUser(int $familyId, ?int $userId, ?int $exceptMemberId): void
+    {
+        if (!$userId) {
+            return;
+        }
+
+        $query = TreeMember::query()
+            ->where('family_id', $familyId)
+            ->where('user_id', $userId);
+
+        if ($exceptMemberId) {
+            $query->where('id', '!=', $exceptMemberId);
+        }
+
+        abort_if(
+            $query->exists(),
+            422,
+            'Ese usuario ya está vinculado a otro miembro del árbol en esta familia.'
+        );
+    }
+
+    private function resolveInvitee(Family $family, array $data): ?User
+    {
+        $hasAppUser = (bool) ($data['has_app_user'] ?? false);
+        $email = strtolower(trim((string) ($data['app_user_email'] ?? '')));
+
+        if (!$hasAppUser || $email === '') {
+            return null;
+        }
+
+        $invitee = User::where('email', $email)->first();
+        abort_unless($invitee, 422, 'No existe un usuario registrado con ese correo.');
+
+        return $invitee;
+    }
+
+    private function createFamilyInvitationIfNeeded(Family $family, int $inviterId, User $invitee): void
+    {
+        $email = strtolower($invitee->email);
+
+        $pendingExists = FamilyInvitation::where('family_id', $family->id)
+            ->where('email', $email)
+            ->where('status', 'pending')
+            ->where('expires_at', '>', now())
+            ->exists();
+
+        if ($pendingExists) {
+            return;
+        }
+
+        FamilyInvitation::create([
+            'family_id'  => $family->id,
+            'invited_by' => $inviterId,
+            'email'      => $email,
+            'token'      => Str::random(64),
+            'status'     => 'pending',
+            'expires_at' => now()->addDays(7),
+        ]);
+    }
+
+    private function createFamilyInvitationByEmail(Family $family, int $inviterId, string $email): FamilyInvitation
+    {
+        $pending = FamilyInvitation::query()
+            ->where('family_id', $family->id)
+            ->where('email', $email)
+            ->where('status', 'pending')
+            ->where('expires_at', '>', now())
+            ->first();
+
+        if ($pending) {
+            return $pending;
+        }
+
+        return FamilyInvitation::create([
+            'family_id' => $family->id,
+            'invited_by' => $inviterId,
+            'email' => $email,
+            'token' => Str::random(64),
+            'status' => 'pending',
+            'expires_at' => now()->addDays(7),
+        ]);
     }
 }

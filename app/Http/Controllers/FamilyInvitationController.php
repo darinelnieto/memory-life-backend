@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Family;
 use App\Models\FamilyInvitation;
+use App\Models\TreeMember;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -88,7 +89,39 @@ class FamilyInvitationController extends Controller
             ->with(['family:id,name,surname', 'inviter:id,name,email'])
             ->get();
 
-        return response()->json(['data' => $invitations]);
+        $data = $invitations->map(function (FamilyInvitation $invitation) {
+            $memberRequest = TreeMember::query()
+                ->with('creator:id,name,email')
+                ->where('family_id', $invitation->family_id)
+                ->whereNull('user_id')
+                ->whereRaw('LOWER(app_user_email) = ?', [strtolower($invitation->email)])
+                ->where('invite_status', 'pending')
+                ->latest()
+                ->first();
+
+            return [
+                'id' => $invitation->id,
+                'family_id' => $invitation->family_id,
+                'family' => $invitation->family,
+                'invited_by' => $invitation->invited_by,
+                'inviter' => $invitation->inviter,
+                'email' => $invitation->email,
+                'token' => $invitation->token,
+                'status' => $invitation->status,
+                'expires_at' => $invitation->expires_at?->toISOString(),
+                'created_at' => $invitation->created_at?->toISOString(),
+                'member_request' => $memberRequest ? [
+                    'tree_member_id' => $memberRequest->id,
+                    'first_name' => $memberRequest->first_name,
+                    'last_name' => $memberRequest->last_name,
+                    'relationship' => $memberRequest->relationship,
+                    'requested_by_name' => $memberRequest->creator?->name,
+                    'requested_by_email' => $memberRequest->creator?->email,
+                ] : null,
+            ];
+        });
+
+        return response()->json(['data' => $data]);
     }
 
     /** Accept an invitation. */
@@ -98,16 +131,16 @@ class FamilyInvitationController extends Controller
 
         $family = $invitation->family;
 
-        abort_if(
-            $family->familyMembers()->where('user_id', $request->user()->id)->exists(),
-            422,
-            'Ya eres miembro de esta familia.'
-        );
+        $alreadyMember = $family->familyMembers()->where('user_id', $request->user()->id)->exists();
 
-        $family->members()->attach($request->user()->id, [
-            'role'      => 'member',
-            'joined_at' => now(),
-        ]);
+        if (!$alreadyMember) {
+            $family->members()->attach($request->user()->id, [
+                'role'      => 'member',
+                'joined_at' => now(),
+            ]);
+        }
+
+        $this->linkPendingTreeMembersToUser($family, $request->user());
 
         $invitation->update(['status' => 'accepted']);
 
@@ -126,6 +159,7 @@ class FamilyInvitationController extends Controller
     {
         $invitation = $this->findValidInvitation($token, $request->user()->email);
         $invitation->update(['status' => 'rejected']);
+        $this->markPendingTreeMembersRejected($invitation);
 
         return response()->json(['message' => 'Invitación rechazada.']);
     }
@@ -156,5 +190,27 @@ class FamilyInvitationController extends Controller
             403,
             'Solo un administrador de la familia puede realizar esta acción.'
         );
+    }
+
+    private function linkPendingTreeMembersToUser(Family $family, User $user): void
+    {
+        TreeMember::query()
+            ->where('family_id', $family->id)
+            ->whereNull('user_id')
+            ->whereRaw('LOWER(app_user_email) = ?', [strtolower($user->email)])
+            ->update([
+                'user_id' => $user->id,
+                'invite_status' => 'accepted',
+            ]);
+    }
+
+    private function markPendingTreeMembersRejected(FamilyInvitation $invitation): void
+    {
+        TreeMember::query()
+            ->where('family_id', $invitation->family_id)
+            ->whereNull('user_id')
+            ->whereRaw('LOWER(app_user_email) = ?', [strtolower($invitation->email)])
+            ->where('invite_status', 'pending')
+            ->update(['invite_status' => 'rejected']);
     }
 }

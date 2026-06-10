@@ -52,6 +52,7 @@ class PostResource extends JsonResource
             'allow_comments' => (bool) $this->allow_comments,
             'allow_likes' => (bool) $this->allow_likes,
             'allow_reposts' => (bool) $this->allow_reposts,
+            'show_on_profile' => (bool) $this->show_on_profile,
             'is_repost' => (bool) $this->repost_of_post_id,
             'repost_of' => $repostOf,
             'likes_count' => $likesCount,

@@ -12,6 +12,8 @@ class TreeMember extends Model
     protected $fillable = [
         'family_id',
         'user_id',
+        'app_user_email',
+        'invite_status',
         'parent_id',
         'spouse_id',
         'created_by',
@@ -20,6 +22,9 @@ class TreeMember extends Model
         'relationship',
         'gender',
         'avatar',
+        'cover',
+        'media_photos',
+        'media_video',
         'birth_date',
         'death_date',
         'bio',
@@ -30,6 +35,7 @@ class TreeMember extends Model
         'birth_date'  => 'date',
         'death_date'  => 'date',
         'is_deceased' => 'boolean',
+        'media_photos' => 'array',
     ];
 
     public function family(): BelongsTo
@@ -49,12 +55,15 @@ class TreeMember extends Model
 
     public function spouse(): BelongsTo
     {
-        return $this->belongsTo(TreeMember::class, 'spouse_id');
+        return $this->belongsTo(TreeMember::class, 'spouse_id')
+            ->whereNotIn('invite_status', ['pending', 'rejected']);
     }
 
     public function children(): HasMany
     {
-        return $this->hasMany(TreeMember::class, 'parent_id')->with('children');
+        return $this->hasMany(TreeMember::class, 'parent_id')
+            ->whereNotIn('invite_status', ['pending', 'rejected'])
+            ->with('children');
     }
 
     public function creator(): BelongsTo
@@ -65,10 +74,45 @@ class TreeMember extends Model
     public function getAvatarUrlAttribute(): ?string
     {
         if (!$this->avatar) {
-            return null;
+            return $this->user?->avatar_url;
         }
         return str_starts_with($this->avatar, 'http')
             ? $this->avatar
             : asset('storage/' . $this->avatar);
+    }
+
+    public function getCoverUrlAttribute(): ?string
+    {
+        if (!$this->cover) {
+            return null;
+        }
+
+        return str_starts_with($this->cover, 'http')
+            ? $this->cover
+            : asset('storage/' . $this->cover);
+    }
+
+    public function getMediaVideoUrlAttribute(): ?string
+    {
+        if (!$this->media_video) {
+            return null;
+        }
+
+        return str_starts_with($this->media_video, 'http')
+            ? $this->media_video
+            : asset('storage/' . $this->media_video);
+    }
+
+    public function getMediaPhotosUrlsAttribute(): array
+    {
+        $photos = $this->media_photos ?? [];
+        if (!is_array($photos)) {
+            return [];
+        }
+
+        return array_values(array_map(
+            static fn (string $path): string => str_starts_with($path, 'http') ? $path : asset('storage/' . $path),
+            $photos,
+        ));
     }
 }

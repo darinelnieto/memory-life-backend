@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\Auth\MemberAccountRegistrationController;
 use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\ChatGroupController;
@@ -26,6 +27,8 @@ Route::prefix('auth')->group(function () {
     Route::post('register', [AuthController::class, 'register']);
     Route::post('forgot-password', [AuthController::class, 'forgotPassword']);
     Route::post('reset-password', [AuthController::class, 'resetPassword']);
+    Route::get('member-register/{token}', [MemberAccountRegistrationController::class, 'show']);
+    Route::post('member-register/{token}', [MemberAccountRegistrationController::class, 'register']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
 
     // Google OAuth
@@ -38,6 +41,7 @@ Route::prefix('auth')->group(function () {
 // Rutas protegidas
 Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('families', FamilyController::class);
+    Route::post('families/{family}/cover', [FamilyController::class, 'uploadCover']);
     Route::post('families/{family}/members', [FamilyController::class, 'addMember']);
 
     // Invitaciones familiares
@@ -60,6 +64,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('families/{family}')->group(function () {
         // Media del perfil del usuario autenticado en la familia seleccionada
         Route::get('profile/media', [ProfileController::class, 'media']);
+        Route::get('profiles/{user}', [ProfileController::class, 'showByUser']);
+        Route::get('profiles/{user}/media', [ProfileController::class, 'mediaByUser']);
 
         // Chat directo entre miembros de la familia
         Route::get('chat/contacts', [ChatController::class, 'contacts']);
@@ -77,6 +83,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('posts', [PostController::class, 'store']);
         Route::patch('posts/{post}', [PostController::class, 'update']);
         Route::delete('posts/{post}', [PostController::class, 'destroy']);
+        Route::get('posts/{post}/media', [PostController::class, 'downloadMedia']);
         Route::post('posts/{post}/like', [PostController::class, 'toggleLike']);
         Route::get('posts/{post}/likes', [PostController::class, 'likes']);
         Route::get('posts/{post}/comments', [PostController::class, 'comments']);
@@ -102,9 +109,13 @@ Route::middleware('auth:sanctum')->group(function () {
         // Family Tree
         Route::get('tree', [TreeMemberController::class, 'tree']);
         Route::get('tree-members', [TreeMemberController::class, 'index']);
+        Route::get('tree-member-requests/outgoing', [TreeMemberController::class, 'outgoingRequests']);
+        Route::post('tree-member-requests/{member}/cancel', [TreeMemberController::class, 'cancelOutgoingRequest']);
+        Route::post('tree-members/{member}/account-invitation', [TreeMemberController::class, 'sendAccountInvitation']);
         Route::post('tree-members', [TreeMemberController::class, 'store']);
         Route::patch('tree-members/{member}', [TreeMemberController::class, 'update']);
         Route::delete('tree-members/{member}', [TreeMemberController::class, 'destroy']);
+        Route::get('tree-members/{member}/profile', [TreeMemberController::class, 'profile']);
         Route::post('tree-members/{member}/claim', [TreeMemberController::class, 'claimAsMe']);
         Route::delete('tree-members/{member}/claim', [TreeMemberController::class, 'unclaimMe']);
 
