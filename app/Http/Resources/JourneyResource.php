@@ -16,6 +16,8 @@ class JourneyResource extends JsonResource
             'title'       => $this->title,
             'description' => $this->description,
             'cover_url'   => $this->cover_url,
+            'published_at' => $this->published_at,
+            'is_published' => $this->is_published,
             'items_count' => $this->whenCounted('items'),
             'items'       => JourneyItemResource::collection($this->whenLoaded('items')),
             'author'      => [

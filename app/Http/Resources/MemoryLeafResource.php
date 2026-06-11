@@ -20,7 +20,7 @@ class MemoryLeafResource extends JsonResource
             'birth_date'       => $this->birth_date?->toDateString(),
             'death_date'       => $this->death_date?->toDateString(),
             'memories_count'   => $this->whenCounted('memories'),
-            'featured_memory'  => new MemoryResource($this->whenLoaded('featuredMemory')),
+            'featured_memory'  => $this->whenLoaded('featuredMemory', fn () => new MemoryResource($this->featuredMemory)),
             'memories'         => MemoryResource::collection($this->whenLoaded('memories')),
         ];
     }

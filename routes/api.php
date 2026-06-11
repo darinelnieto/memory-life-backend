@@ -7,6 +7,7 @@ use App\Http\Controllers\ChatController;
 use App\Http\Controllers\ChatGroupController;
 use App\Http\Controllers\FamilyController;
 use App\Http\Controllers\FamilyInvitationController;
+use App\Http\Controllers\GlobalNotificationController;
 use App\Http\Controllers\JourneyController;
 use App\Http\Controllers\JourneyItemController;
 use App\Http\Controllers\MemoryController;
@@ -74,9 +75,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('chat/conversations/{member}/typing', [ChatController::class, 'typing']);
         Route::get('chat/groups', [ChatGroupController::class, 'index']);
         Route::post('chat/groups', [ChatGroupController::class, 'store']);
+        Route::patch('chat/groups/{group}', [ChatGroupController::class, 'update']);
+        Route::delete('chat/groups/{group}', [ChatGroupController::class, 'destroy']);
+        Route::post('chat/groups/{group}/leave', [ChatGroupController::class, 'leave']);
         Route::get('chat/groups/{group}/messages', [ChatGroupController::class, 'messages']);
         Route::post('chat/groups/{group}/messages', [ChatGroupController::class, 'send']);
         Route::post('chat/groups/{group}/typing', [ChatGroupController::class, 'typing']);
+        Route::get('notifications', [GlobalNotificationController::class, 'index']);
 
         // Posts del feed
         Route::get('posts', [PostController::class, 'index']);
@@ -96,9 +101,14 @@ Route::middleware('auth:sanctum')->group(function () {
         // Memory Leaves
         Route::get('memory-leaves', [MemoryLeafController::class, 'index']);
         Route::post('memory-leaves', [MemoryLeafController::class, 'store']);
+        Route::get('memory-leaves/share-users', [MemoryLeafController::class, 'shareUsers']);
+        Route::get('memory-leaves/shares/pending', [MemoryLeafController::class, 'pendingShares']);
+        Route::post('memory-leaves/shares/{share}/accept', [MemoryLeafController::class, 'acceptShare']);
+        Route::post('memory-leaves/shares/{share}/reject', [MemoryLeafController::class, 'rejectShare']);
         Route::get('memory-leaves/{memoryLeaf}', [MemoryLeafController::class, 'show']);
         Route::patch('memory-leaves/{memoryLeaf}', [MemoryLeafController::class, 'update']);
         Route::post('memory-leaves/{memoryLeaf}/avatar', [MemoryLeafController::class, 'uploadAvatar']);
+        Route::post('memory-leaves/{memoryLeaf}/share', [MemoryLeafController::class, 'share']);
         Route::delete('memory-leaves/{memoryLeaf}', [MemoryLeafController::class, 'destroy']);
 
         // Memorias de un Memory Leaf
@@ -122,6 +132,7 @@ Route::middleware('auth:sanctum')->group(function () {
         // Journeys
         Route::get('journeys', [JourneyController::class, 'index']);
         Route::post('journeys', [JourneyController::class, 'store']);
+        Route::patch('journeys/{journey}', [JourneyController::class, 'update']);
         Route::get('journeys/{journey}', [JourneyController::class, 'show']);
         Route::delete('journeys/{journey}', [JourneyController::class, 'destroy']);
         Route::post('journeys/{journey}/items', [JourneyItemController::class, 'store']);

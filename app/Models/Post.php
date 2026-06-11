@@ -21,6 +21,7 @@ class Post extends Model
         'allow_likes',
         'allow_reposts',
         'show_on_profile',
+        'scheduled_at',
     ];
 
     public function family(): BelongsTo
@@ -86,6 +87,7 @@ class Post extends Model
             'allow_reposts' => 'boolean',
             'show_on_profile' => 'boolean',
             'media_paths' => 'array',
+            'scheduled_at' => 'datetime',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

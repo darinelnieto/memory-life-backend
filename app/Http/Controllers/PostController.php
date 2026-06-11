@@ -21,7 +21,10 @@ class PostController extends Controller
     {
         $this->assertMember($family, $request);
 
-        $posts = $family->posts()
+        $includeScheduled = $request->boolean('include_scheduled');
+        $now = now();
+
+        $postsQuery = $family->posts()
             ->with([
                 'user',
                 'likes' => fn ($q) => $q->where('user_id', $request->user()->id),
@@ -30,8 +33,25 @@ class PostController extends Controller
                 'repostOf.user',
             ])
             ->withCount(['likes', 'comments', 'reposts'])
-            ->latest()
-            ->paginate(20);
+            ->latest();
+
+        if (!$includeScheduled) {
+            $postsQuery->where(function ($query) {
+                $query->whereNull('scheduled_at')
+                    ->orWhere('scheduled_at', '<=', now());
+            });
+        } else {
+            $postsQuery->where(function ($query) use ($request, $now) {
+                $query->whereNull('scheduled_at')
+                    ->orWhere('scheduled_at', '<=', $now)
+                    ->orWhere(function ($sq) use ($request, $now) {
+                        $sq->where('scheduled_at', '>', $now)
+                            ->where('user_id', $request->user()->id);
+                    });
+            });
+        }
+
+        $posts = $postsQuery->paginate(20);
 
         return PostResource::collection($posts);
     }
@@ -43,6 +63,7 @@ class PostController extends Controller
         $data = $request->validate([
             'content'   => 'nullable|string|max:2000',
             'type'      => 'required|in:text,photo,video',
+            'scheduled_at' => 'nullable|date',
             'allow_comments' => 'sometimes|boolean',
             'allow_likes' => 'sometimes|boolean',
             'allow_reposts' => 'sometimes|boolean',
@@ -123,6 +144,7 @@ class PostController extends Controller
             'type' => $data['type'],
             'media_path' => $mediaPath,
             'media_paths' => count($mediaPaths) > 0 ? $mediaPaths : null,
+            'scheduled_at' => $data['scheduled_at'] ?? null,
             'allow_comments' => $data['allow_comments'] ?? true,
             'allow_likes' => $data['allow_likes'] ?? true,
             'allow_reposts' => $data['allow_reposts'] ?? true,
@@ -138,14 +160,20 @@ class PostController extends Controller
 
         $data = $request->validate([
             'content' => 'nullable|string|max:2000',
+            'type' => 'sometimes|in:text,photo,video',
+            'media' => 'nullable|file|max:50240',
             'allow_comments' => 'sometimes|boolean',
             'allow_likes' => 'sometimes|boolean',
             'allow_reposts' => 'sometimes|boolean',
+            'scheduled_at' => 'nullable|date',
         ]);
 
         $updateData = [];
         if (array_key_exists('content', $data)) {
             $updateData['content'] = $data['content'];
+        }
+        if (array_key_exists('type', $data)) {
+            $updateData['type'] = $data['type'];
         }
         if (array_key_exists('allow_comments', $data)) {
             $updateData['allow_comments'] = $data['allow_comments'];
@@ -155,6 +183,45 @@ class PostController extends Controller
         }
         if (array_key_exists('allow_reposts', $data)) {
             $updateData['allow_reposts'] = $data['allow_reposts'];
+        }
+        if (array_key_exists('scheduled_at', $data)) {
+            $updateData['scheduled_at'] = $data['scheduled_at'];
+        }
+
+        if (array_key_exists('type', $data) && $data['type'] === 'text') {
+            $pathsToDelete = [];
+            if ($post->media_path) {
+                $pathsToDelete[] = $post->media_path;
+            }
+            if (is_array($post->media_paths)) {
+                $pathsToDelete = array_merge($pathsToDelete, $post->media_paths);
+            }
+
+            $pathsToDelete = array_values(array_unique(array_filter($pathsToDelete)));
+            if (count($pathsToDelete) > 0) {
+                Storage::disk('public')->delete($pathsToDelete);
+            }
+
+            $updateData['media_path'] = null;
+            $updateData['media_paths'] = null;
+        }
+
+        if ($request->hasFile('media')) {
+            $pathsToDelete = [];
+            if ($post->media_path) {
+                $pathsToDelete[] = $post->media_path;
+            }
+            if (is_array($post->media_paths)) {
+                $pathsToDelete = array_merge($pathsToDelete, $post->media_paths);
+            }
+            $pathsToDelete = array_values(array_unique(array_filter($pathsToDelete)));
+            if (count($pathsToDelete) > 0) {
+                Storage::disk('public')->delete($pathsToDelete);
+            }
+
+            $mediaPath = $request->file('media')->store("posts/{$family->id}", 'public');
+            $updateData['media_path'] = $mediaPath;
+            $updateData['media_paths'] = [$mediaPath];
         }
 
         if (count($updateData) > 0) {

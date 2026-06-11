@@ -28,6 +28,16 @@ class MemoryLeaf extends Model
         return $this->hasMany(Memory::class);
     }
 
+    public function sharesSent(): HasMany
+    {
+        return $this->hasMany(MemoryLeafShare::class, 'memory_leaf_id');
+    }
+
+    public function sharesReceivedAsCopy(): HasMany
+    {
+        return $this->hasMany(MemoryLeafShare::class, 'copied_memory_leaf_id');
+    }
+
     public function getAvatarUrlAttribute(): string|null
     {
         if (!$this->avatar) return null;

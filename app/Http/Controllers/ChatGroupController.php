@@ -12,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ChatGroupController extends Controller
 {
@@ -51,6 +52,7 @@ class ChatGroupController extends Controller
                     'id' => $group->id,
                     'family_id' => $group->family_id,
                     'name' => $group->name,
+                    'can_manage' => (int) $group->created_by === (int) $user->id,
                     'members_count' => (int) $group->members_count,
                     'unread_count' => (int) $unreadCount,
                     'is_typing' => $isTyping,
@@ -144,20 +146,123 @@ class ChatGroupController extends Controller
         $group->load(['members.user:id,name,username,email,avatar']);
 
         return response()->json([
-            'data' => [
-                'id' => $group->id,
-                'family_id' => $group->family_id,
-                'name' => $group->name,
-                'members_count' => $group->members->count(),
-                'members' => $group->members->map(fn ($member) => [
-                    'id' => $member->user->id,
-                    'name' => $member->user->name,
-                    'username' => $member->user->username,
-                    'email' => $member->user->email,
-                    'avatar_url' => $member->user->avatar_url,
-                ])->values(),
-            ],
+            'data' => $this->serializeGroup($group, $user->id),
         ], 201);
+    }
+
+    public function update(Request $request, Family $family, ChatGroup $group): JsonResponse
+    {
+        $user = $request->user();
+        $this->authorizeGroupAccess($family, $group, $user->id);
+        $this->authorizeGroupManagement($group, $user->id);
+
+        $validated = $request->validate([
+            'name' => 'sometimes|string|max:120',
+            'member_ids' => 'sometimes|array|min:1',
+            'member_ids.*' => 'integer|distinct',
+        ]);
+
+        if (!array_key_exists('name', $validated) && !array_key_exists('member_ids', $validated)) {
+            return response()->json([
+                'message' => 'Debes enviar un nuevo nombre o miembros del grupo.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($family, $group, $user, $validated) {
+            if (array_key_exists('name', $validated)) {
+                $group->name = $validated['name'];
+                $group->save();
+            }
+
+            if (!array_key_exists('member_ids', $validated)) {
+                return;
+            }
+
+            $requestedMemberIds = collect($validated['member_ids'] ?? [])
+                ->map(fn ($id) => (int) $id)
+                ->filter()
+                ->values();
+
+            $familyMemberIds = $family->familyMembers()->pluck('user_id');
+            $invalidIds = $requestedMemberIds->diff($familyMemberIds);
+
+            if ($invalidIds->isNotEmpty()) {
+                throw ValidationException::withMessages([
+                    'member_ids' => ['Solo puedes agregar miembros que pertenezcan a la familia.'],
+                ]);
+            }
+
+            $finalMemberIds = $requestedMemberIds
+                ->push($user->id)
+                ->unique()
+                ->values();
+
+            if ($finalMemberIds->count() < 2) {
+                throw ValidationException::withMessages([
+                    'member_ids' => ['Un chat grupal requiere al menos 2 miembros de la familia.'],
+                ]);
+            }
+
+            $currentMemberIds = $group->members()->pluck('user_id');
+            $memberIdsToRemove = $currentMemberIds->diff($finalMemberIds)->values();
+            $memberIdsToAdd = $finalMemberIds->diff($currentMemberIds)->values();
+
+            if ($memberIdsToRemove->isNotEmpty()) {
+                $group->members()->whereIn('user_id', $memberIdsToRemove)->delete();
+            }
+
+            foreach ($memberIdsToAdd as $memberId) {
+                ChatGroupMember::create([
+                    'chat_group_id' => $group->id,
+                    'user_id' => (int) $memberId,
+                    'added_by' => $user->id,
+                    'joined_at' => now(),
+                    'last_read_at' => now(),
+                ]);
+            }
+        });
+
+        $group->load(['members.user:id,name,username,email,avatar']);
+
+        return response()->json([
+            'data' => $this->serializeGroup($group, $user->id),
+        ]);
+    }
+
+    public function destroy(Request $request, Family $family, ChatGroup $group): JsonResponse
+    {
+        $user = $request->user();
+        $this->authorizeGroupAccess($family, $group, $user->id);
+        $this->authorizeGroupManagement($group, $user->id);
+
+        DB::transaction(function () use ($group) {
+            $group->messages()->delete();
+            $group->members()->delete();
+            $group->delete();
+        });
+
+        return response()->json([
+            'message' => 'Grupo eliminado correctamente.',
+        ]);
+    }
+
+    public function leave(Request $request, Family $family, ChatGroup $group): JsonResponse
+    {
+        $user = $request->user();
+        $this->authorizeGroupAccess($family, $group, $user->id);
+
+        if ((int) $group->created_by === (int) $user->id) {
+            return response()->json([
+                'message' => 'El creador no puede salir del grupo. Puede editar miembros o eliminar el grupo.',
+            ], 422);
+        }
+
+        $group->members()->where('user_id', $user->id)->delete();
+        Cache::forget($this->groupTypingKey($family->id, $group->id, $user->id));
+
+        return response()->json([
+            'message' => 'Saliste del grupo correctamente.',
+        ]);
     }
 
     public function messages(Request $request, Family $family, ChatGroup $group): JsonResponse
@@ -286,6 +391,33 @@ class ChatGroupController extends Controller
             403,
             'No tienes acceso a este chat grupal.'
         );
+    }
+
+    private function authorizeGroupManagement(ChatGroup $group, int $userId): void
+    {
+        abort_unless(
+            (int) $group->created_by === $userId,
+            403,
+            'Solo el creador puede editar o eliminar este chat grupal.'
+        );
+    }
+
+    private function serializeGroup(ChatGroup $group, ?int $viewerId = null): array
+    {
+        return [
+            'id' => $group->id,
+            'family_id' => $group->family_id,
+            'name' => $group->name,
+            'can_manage' => $viewerId !== null ? ((int) $group->created_by === (int) $viewerId) : false,
+            'members_count' => $group->members->count(),
+            'members' => $group->members->map(fn ($member) => [
+                'id' => $member->user->id,
+                'name' => $member->user->name,
+                'username' => $member->user->username,
+                'email' => $member->user->email,
+                'avatar_url' => $member->user->avatar_url,
+            ])->values(),
+        ];
     }
 
     private function authorizeFamilyMember(Family $family, int $userId): void

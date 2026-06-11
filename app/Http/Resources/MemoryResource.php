@@ -12,8 +12,10 @@ class MemoryResource extends JsonResource
         return [
             'id'          => $this->id,
             'type'        => $this->type,
+            'title'       => $this->title,
             'content'     => $this->content,
             'file_url'    => $this->file_url,
+            'media_urls'  => $this->media_urls,
             'caption'     => $this->caption,
             'created_at'  => $this->created_at?->toISOString(),
             'contributor' => $this->whenLoaded('contributor', fn () => [

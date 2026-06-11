@@ -8,7 +8,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Journey extends Model
 {
-    protected $fillable = ['family_id', 'user_id', 'tree_member_id', 'title', 'description', 'cover_path'];
+    protected $fillable = ['family_id', 'user_id', 'tree_member_id', 'title', 'description', 'cover_path', 'published_at'];
+
+    protected $casts = [
+        'published_at' => 'datetime',
+    ];
 
     public function family(): BelongsTo
     {
@@ -33,5 +37,14 @@ class Journey extends Model
     public function getCoverUrlAttribute(): ?string
     {
         return $this->cover_path ? asset('storage/' . $this->cover_path) : null;
+    }
+
+    public function getIsPublishedAttribute(): bool
+    {
+        if (!$this->published_at) {
+            return true;
+        }
+
+        return $this->published_at->lessThanOrEqualTo(now());
     }
 }
