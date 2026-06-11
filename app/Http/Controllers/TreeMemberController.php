@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Notifications\MemberAccountInvitationNotification;
@@ -24,34 +25,112 @@ class TreeMemberController extends Controller
     public function tree(Family $family): AnonymousResourceCollection
     {
         $this->authorizeFamily($family);
+        $supportsPets = $this->supportsPetProfiles();
 
         // Of each couple (A ↔ B), exclude the one with the HIGHER id (the "secondary").
         // This avoids both members excluding each other when the link is bidirectional.
-        $spouseIds = TreeMember::where('family_id', $family->id)
+        $spouseIdsQuery = TreeMember::where('family_id', $family->id)
             ->whereNotNull('spouse_id')
-            ->whereColumn('id', '<', 'spouse_id')   // only the primary (lower id) emits the exclusion
-            ->pluck('spouse_id');
+            ->whereColumn('id', '<', 'spouse_id'); // only the primary (lower id) emits the exclusion
 
-        $roots = TreeMember::with(['children.spouse', 'children.children', 'spouse'])
+        if ($supportsPets) {
+            $spouseIdsQuery->where('is_pet', false);
+        }
+
+        $spouseIds = $spouseIdsQuery->pluck('spouse_id');
+
+        $rootsQuery = TreeMember::with(['children.spouse', 'children.children', 'spouse'])
             ->where('family_id', $family->id)
             ->whereNull('parent_id')
             ->whereNotIn('invite_status', ['pending', 'rejected', 'cancelled'])
-            ->whereNotIn('id', $spouseIds)
-            ->get();
+            ->whereNotIn('id', $spouseIds);
+
+        if ($supportsPets) {
+            $rootsQuery->where('is_pet', false);
+        }
+
+        $roots = $rootsQuery->get();
 
         return TreeMemberResource::collection($roots);
     }
 
     /** Return all members flat (for selects / lookups) */
-    public function index(Family $family): AnonymousResourceCollection
+    public function index(Request $request, Family $family): AnonymousResourceCollection
     {
         $this->authorizeFamily($family);
+        $supportsPets = $this->supportsPetProfiles();
+        $includeAssignablePets = $request->boolean('include_assignable_pets', false);
 
-        $members = TreeMember::where('family_id', $family->id)
-            ->whereNotIn('invite_status', ['pending', 'rejected', 'cancelled'])
-            ->get();
+        $membersQuery = TreeMember::where('family_id', $family->id)
+            ->whereNotIn('invite_status', ['pending', 'rejected', 'cancelled']);
+
+        if ($supportsPets) {
+            if ($includeAssignablePets) {
+                $authUserId = $request->user()->id;
+
+                $membersQuery->where(function ($query) use ($authUserId) {
+                    $query->where('is_pet', false)
+                        ->orWhere(function ($petQuery) use ($authUserId) {
+                            $petQuery->where('is_pet', true)
+                                ->where(function ($ownedPetQuery) use ($authUserId) {
+                                    $ownedPetQuery->where('created_by', $authUserId)
+                                        ->orWhere('user_id', $authUserId);
+                                });
+                        });
+                });
+            } else {
+                $membersQuery->where('is_pet', false);
+            }
+        }
+
+        $members = $membersQuery->get();
 
         return TreeMemberResource::collection($members);
+    }
+
+    /** Return pets for an owner profile in family context */
+    public function pets(Request $request, Family $family): AnonymousResourceCollection
+    {
+        $this->authorizeFamily($family);
+        if (!$this->supportsPetProfiles()) {
+            return TreeMemberResource::collection(collect());
+        }
+
+        $data = $request->validate([
+            'owner_tree_member_id' => 'nullable|integer|exists:tree_members,id',
+            'owner_user_id' => 'nullable|integer|exists:users,id',
+        ]);
+
+        $ownerMemberId = $data['owner_tree_member_id'] ?? null;
+
+        if (!$ownerMemberId && !empty($data['owner_user_id'])) {
+            $ownerMemberId = TreeMember::query()
+                ->where('family_id', $family->id)
+                ->where('is_pet', false)
+                ->where('user_id', $data['owner_user_id'])
+                ->value('id');
+        }
+
+        if (!$ownerMemberId) {
+            return TreeMemberResource::collection(collect());
+        }
+
+        $owner = TreeMember::query()
+            ->where('family_id', $family->id)
+            ->where('is_pet', false)
+            ->find($ownerMemberId);
+
+        abort_if(!$owner, 422, 'El perfil dueño no es válido para mascotas.');
+
+        $pets = TreeMember::query()
+            ->where('family_id', $family->id)
+            ->where('is_pet', true)
+            ->where('owner_tree_member_id', $owner->id)
+            ->whereNotIn('invite_status', ['pending', 'rejected', 'cancelled'])
+            ->latest()
+            ->get();
+
+        return TreeMemberResource::collection($pets);
     }
 
     public function outgoingRequests(Request $request): JsonResponse
@@ -107,14 +186,19 @@ class TreeMemberController extends Controller
     {
         $this->authorizeFamily($family);
         abort_if($member->family_id !== $family->id, 403);
+        $authUserId = $request->user()->id;
+        $isOwnHumanProfile = !$member->is_pet && $member->user_id === $authUserId;
 
         $journeys = Journey::query()
             ->where('family_id', $family->id)
-            ->where(function ($query) use ($member) {
+            ->where(function ($query) use ($member, $isOwnHumanProfile, $authUserId) {
                 $query->where('tree_member_id', $member->id);
 
-                if ($member->user_id) {
-                    $query->orWhere('user_id', $member->user_id);
+                if ($isOwnHumanProfile) {
+                    $query->orWhere(function ($ownQuery) use ($authUserId) {
+                        $ownQuery->whereNull('tree_member_id')
+                            ->where('user_id', $authUserId);
+                    });
                 }
             })
             ->with('user')
@@ -134,6 +218,7 @@ class TreeMemberController extends Controller
     {
         $this->authorizeFamily($family);
         abort_if($member->family_id !== $family->id, 403);
+        abort_if($member->is_pet, 422, 'Las mascotas no tienen invitación de cuenta.');
         abort_if($member->user_id !== null, 422, 'Este miembro ya tiene una cuenta vinculada.');
 
         $data = $request->validate([
@@ -160,12 +245,20 @@ class TreeMemberController extends Controller
     public function store(Request $request, Family $family): TreeMemberResource
     {
         $this->authorizeFamily($family);
+        $supportsPets = $this->supportsPetProfiles();
+        $isPet = $request->boolean('is_pet', false);
 
         $data = $request->validate([
-            'first_name'   => 'nullable|required_without_all:use_my_profile,has_app_user|string|max:100',
-            'last_name'    => 'nullable|required_without_all:use_my_profile,has_app_user|string|max:100',
+            'first_name'   => $isPet
+                ? 'required|string|max:100'
+                : 'nullable|required_without_all:use_my_profile,has_app_user|string|max:100',
+            'last_name'    => $isPet
+                ? 'nullable|string|max:100'
+                : 'nullable|required_without_all:use_my_profile,has_app_user|string|max:100',
             'relationship' => 'nullable|string|max:80',
             'gender'       => 'nullable|in:male,female,other',
+            'is_pet'       => 'boolean',
+            'owner_tree_member_id' => 'nullable|integer|exists:tree_members,id',
             'avatar'       => 'nullable|file|image|mimes:jpg,jpeg,png,webp|max:5120',
             'cover'        => 'nullable|file|image|mimes:jpg,jpeg,png,webp|max:5120',
             'parent_id'    => 'nullable|integer|exists:tree_members,id',
@@ -187,11 +280,25 @@ class TreeMemberController extends Controller
             'send_invitation' => 'boolean',
         ]);
 
-        $useMyProfile = (bool) ($data['use_my_profile'] ?? false);
+        $isPetFinal = $supportsPets ? (bool) ($data['is_pet'] ?? false) : false;
+        $ownerMemberId = $data['owner_tree_member_id'] ?? null;
+
+        if ($isPetFinal) {
+            abort_if(!$ownerMemberId, 422, 'Debes seleccionar el perfil dueño de la mascota.');
+
+            $owner = TreeMember::query()
+                ->where('family_id', $family->id)
+                ->where('is_pet', false)
+                ->find($ownerMemberId);
+
+            abort_if(!$owner, 422, 'El perfil dueño no es válido para mascotas.');
+        }
+
+        $useMyProfile = $isPetFinal ? false : (bool) ($data['use_my_profile'] ?? false);
         $selfUser = $useMyProfile ? $request->user() : null;
 
-        $createdAccountUser = $useMyProfile ? null : $this->createAppAccountForMemberIfRequested($data);
-        $invitee = $selfUser ?? $createdAccountUser ?? $this->resolveInvitee($family, $data);
+        $createdAccountUser = ($useMyProfile || $isPetFinal) ? null : $this->createAppAccountForMemberIfRequested($data);
+        $invitee = ($isPetFinal ? null : ($selfUser ?? $createdAccountUser ?? $this->resolveInvitee($family, $data)));
         $this->ensureSingleLinkedMemberPerUser($family->id, $invitee?->id, null);
 
         [$selfFirstName, $selfLastName] = $selfUser ? $this->splitUserName($selfUser) : ['', ''];
@@ -213,7 +320,7 @@ class TreeMemberController extends Controller
         $photoPaths = $this->storeMemberPhotos($request, $family);
         $videoPath = $this->storeMemberVideo($request, $family);
 
-        $member = TreeMember::create([
+        $memberData = [
             ...collect($data)->except([
                 'first_name',
                 'last_name',
@@ -230,31 +337,40 @@ class TreeMemberController extends Controller
             ])->all(),
             'first_name' => $firstName,
             'last_name' => $lastName,
-            'user_id'    => $shouldLinkUserNow ? ($invitee?->id ?? ($data['user_id'] ?? null)) : null,
-            'app_user_email' => $invitee?->email ?? ($data['account_email'] ?? null) ?? ($data['app_user_email'] ?? null),
+            'user_id'    => $isPetFinal ? $request->user()->id : ($shouldLinkUserNow ? ($invitee?->id ?? ($data['user_id'] ?? null)) : null),
+            'spouse_id' => $isPetFinal ? null : ($data['spouse_id'] ?? null),
+            'parent_id' => $isPetFinal ? null : ($data['parent_id'] ?? null),
+            'app_user_email' => $isPetFinal ? null : ($invitee?->email ?? ($data['account_email'] ?? null) ?? ($data['app_user_email'] ?? null)),
             'avatar'     => $avatarValue,
             'cover'      => $coverPath,
             'media_photos' => $photoPaths,
             'media_video' => $videoPath,
             'family_id'  => $family->id,
             'created_by' => $request->user()->id,
-        ]);
+        ];
+
+        if ($supportsPets) {
+            $memberData['is_pet'] = $isPetFinal;
+            $memberData['owner_tree_member_id'] = $isPetFinal ? $ownerMemberId : null;
+        }
+
+        $member = TreeMember::create($memberData);
 
         if ($createdAccountUser && $avatarPath && !$createdAccountUser->avatar) {
             $createdAccountUser->update(['avatar' => $avatarPath]);
         }
 
-        $shouldRequireAcceptance = !$useMyProfile && (bool) $invitee;
+        $shouldRequireAcceptance = !$isPetFinal && !$useMyProfile && (bool) $invitee;
         $inviteStatus = $shouldRequireAcceptance ? 'pending' : 'none';
 
         $member->update(['invite_status' => $inviteStatus]);
 
-        if ($invitee && !$useMyProfile) {
+        if ($invitee && !$useMyProfile && !$isPetFinal) {
             $this->createFamilyInvitationIfNeeded($family, $request->user()->id, $invitee);
         }
 
         // If assigned as spouse, link back bidirectionally
-        if (!empty($data['spouse_id'])) {
+        if (!$isPetFinal && !empty($data['spouse_id'])) {
             TreeMember::where('id', $data['spouse_id'])
                 ->whereNull('spouse_id')
                 ->update(['spouse_id' => $member->id]);
@@ -267,12 +383,15 @@ class TreeMemberController extends Controller
     {
         $this->authorizeFamily($family);
         abort_if($member->family_id !== $family->id, 403);
+        $supportsPets = $this->supportsPetProfiles();
 
         $data = $request->validate([
             'first_name'   => 'sometimes|nullable|string|max:100',
             'last_name'    => 'sometimes|nullable|string|max:100',
             'relationship' => 'nullable|string|max:80',
             'gender'       => 'nullable|in:male,female,other',
+            'is_pet'       => 'boolean',
+            'owner_tree_member_id' => 'nullable|integer|exists:tree_members,id',
             'avatar'       => 'nullable|file|image|mimes:jpg,jpeg,png,webp|max:5120',
             'cover'        => 'nullable|file|image|mimes:jpg,jpeg,png,webp|max:5120',
             'parent_id'    => 'nullable|integer|exists:tree_members,id',
@@ -295,10 +414,24 @@ class TreeMemberController extends Controller
             'send_invitation' => 'boolean',
         ]);
 
-        $useMyProfile = (bool) ($data['use_my_profile'] ?? false);
+        $isPet = $supportsPets ? (bool) ($data['is_pet'] ?? $member->is_pet) : false;
+        $ownerMemberId = $data['owner_tree_member_id'] ?? $member->owner_tree_member_id;
+
+        if ($isPet) {
+            abort_if(!$ownerMemberId, 422, 'Debes seleccionar el perfil dueño de la mascota.');
+
+            $owner = TreeMember::query()
+                ->where('family_id', $family->id)
+                ->where('is_pet', false)
+                ->find($ownerMemberId);
+
+            abort_if(!$owner, 422, 'El perfil dueño no es válido para mascotas.');
+        }
+
+        $useMyProfile = $isPet ? false : (bool) ($data['use_my_profile'] ?? false);
         $selfUser = $useMyProfile ? $request->user() : null;
-        $createdAccountUser = $useMyProfile ? null : $this->createAppAccountForMemberIfRequested($data);
-        $invitee = $selfUser ?? $createdAccountUser ?? $this->resolveInvitee($family, $data);
+        $createdAccountUser = ($useMyProfile || $isPet) ? null : $this->createAppAccountForMemberIfRequested($data);
+        $invitee = ($isPet ? null : ($selfUser ?? $createdAccountUser ?? $this->resolveInvitee($family, $data)));
         $this->ensureSingleLinkedMemberPerUser($family->id, $invitee?->id, $member->id);
         $shouldUseInviteeProfile = !$useMyProfile && $invitee && !$createdAccountUser;
         $shouldLinkUserNow = $useMyProfile;
@@ -320,13 +453,24 @@ class TreeMemberController extends Controller
             ->all();
 
         if ($invitee) {
-            $payload['user_id'] = $shouldLinkUserNow ? $invitee->id : null;
-            $payload['app_user_email'] = $invitee->email;
-            $payload['invite_status'] = $shouldLinkUserNow ? 'accepted' : 'pending';
+            $payload['user_id'] = $isPet ? null : ($shouldLinkUserNow ? $invitee->id : null);
+            $payload['app_user_email'] = $isPet ? null : $invitee->email;
+            $payload['invite_status'] = $isPet ? 'none' : ($shouldLinkUserNow ? 'accepted' : 'pending');
 
-            if (!$useMyProfile) {
+            if (!$useMyProfile && !$isPet) {
                 $this->createFamilyInvitationIfNeeded($family, $request->user()->id, $invitee);
             }
+        }
+
+        if ($supportsPets && $isPet) {
+            $payload['owner_tree_member_id'] = $ownerMemberId;
+            $payload['user_id'] = null;
+            $payload['app_user_email'] = null;
+            $payload['invite_status'] = 'none';
+            $payload['parent_id'] = null;
+            $payload['spouse_id'] = null;
+        } elseif ($supportsPets && array_key_exists('owner_tree_member_id', $data)) {
+            $payload['owner_tree_member_id'] = null;
         }
 
         if ($useMyProfile && $selfUser) {
@@ -421,6 +565,7 @@ class TreeMemberController extends Controller
     {
         $this->authorizeFamily($family);
         abort_if($member->family_id !== $family->id, 403);
+        abort_if($this->supportsPetProfiles() && $member->is_pet, 422, 'Las mascotas no se vinculan a cuentas de usuario.');
         abort_if(
             $member->user_id !== null && $member->user_id !== $request->user()->id,
             422,
@@ -444,6 +589,7 @@ class TreeMemberController extends Controller
     {
         $this->authorizeFamily($family);
         abort_if($member->family_id !== $family->id, 403);
+        abort_if($this->supportsPetProfiles() && $member->is_pet, 422, 'Las mascotas no se vinculan a cuentas de usuario.');
         abort_if(
             $member->user_id !== $request->user()->id,
             403,
@@ -462,6 +608,12 @@ class TreeMemberController extends Controller
             403,
             'No tienes acceso a esta familia'
         );
+    }
+
+    private function supportsPetProfiles(): bool
+    {
+        return Schema::hasColumn('tree_members', 'is_pet')
+            && Schema::hasColumn('tree_members', 'owner_tree_member_id');
     }
 
     private function storeMemberPhotos(Request $request, Family $family): array

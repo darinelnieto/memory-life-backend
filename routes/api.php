@@ -72,6 +72,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('chat/contacts', [ChatController::class, 'contacts']);
         Route::get('chat/conversations/{member}', [ChatController::class, 'conversation']);
         Route::post('chat/conversations/{member}', [ChatController::class, 'store']);
+        Route::post('chat/conversations/{member}/messages/{chatMessage}/view', [ChatController::class, 'markViewed']);
+        Route::patch('chat/conversations/{member}/messages/{chatMessage}', [ChatController::class, 'update']);
+        Route::delete('chat/conversations/{member}/messages/{chatMessage}', [ChatController::class, 'destroy']);
         Route::post('chat/conversations/{member}/typing', [ChatController::class, 'typing']);
         Route::get('chat/groups', [ChatGroupController::class, 'index']);
         Route::post('chat/groups', [ChatGroupController::class, 'store']);
@@ -80,6 +83,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('chat/groups/{group}/leave', [ChatGroupController::class, 'leave']);
         Route::get('chat/groups/{group}/messages', [ChatGroupController::class, 'messages']);
         Route::post('chat/groups/{group}/messages', [ChatGroupController::class, 'send']);
+        Route::post('chat/groups/{group}/messages/{message}/view', [ChatGroupController::class, 'markViewed']);
+        Route::patch('chat/groups/{group}/messages/{message}', [ChatGroupController::class, 'updateMessage']);
+        Route::delete('chat/groups/{group}/messages/{message}', [ChatGroupController::class, 'destroyMessage']);
         Route::post('chat/groups/{group}/typing', [ChatGroupController::class, 'typing']);
         Route::get('notifications', [GlobalNotificationController::class, 'index']);
 
@@ -119,6 +125,7 @@ Route::middleware('auth:sanctum')->group(function () {
         // Family Tree
         Route::get('tree', [TreeMemberController::class, 'tree']);
         Route::get('tree-members', [TreeMemberController::class, 'index']);
+        Route::get('tree-members/pets', [TreeMemberController::class, 'pets']);
         Route::get('tree-member-requests/outgoing', [TreeMemberController::class, 'outgoingRequests']);
         Route::post('tree-member-requests/{member}/cancel', [TreeMemberController::class, 'cancelOutgoingRequest']);
         Route::post('tree-members/{member}/account-invitation', [TreeMemberController::class, 'sendAccountInvitation']);

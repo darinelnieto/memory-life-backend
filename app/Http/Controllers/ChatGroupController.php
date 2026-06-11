@@ -6,12 +6,16 @@ use App\Http\Resources\ChatGroupMessageResource;
 use App\Models\ChatGroup;
 use App\Models\ChatGroupMember;
 use App\Models\ChatGroupMessage;
+use App\Models\ChatGroupMessageView;
+use App\Models\ChatGroupMessageUserHidden;
 use App\Models\Family;
 use App\Models\User;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class ChatGroupController extends Controller
@@ -38,7 +42,8 @@ class ChatGroupController extends Controller
 
                 $unreadQuery = ChatGroupMessage::query()
                     ->where('chat_group_id', $group->id)
-                    ->where('sender_id', '!=', $user->id);
+                    ->where('sender_id', '!=', $user->id)
+                    ->whereDoesntHave('hiddenForUsers', fn ($query) => $query->where('user_id', $user->id));
 
                 if ($lastReadAt) {
                     $unreadQuery->where('created_at', '>', $lastReadAt);
@@ -272,7 +277,9 @@ class ChatGroupController extends Controller
 
         $messages = ChatGroupMessage::query()
             ->where('chat_group_id', $group->id)
-            ->with('sender:id,name,username,email,avatar')
+            ->with(['sender:id,name,username,email,avatar', 'replyTo.sender:id,name,username,email,avatar'])
+            ->with(['views' => fn ($query) => $query->where('user_id', $user->id)])
+            ->whereDoesntHave('hiddenForUsers', fn ($query) => $query->where('user_id', $user->id))
             ->orderBy('created_at')
             ->get();
 
@@ -297,22 +304,140 @@ class ChatGroupController extends Controller
         $this->authorizeGroupAccess($family, $group, $user->id);
 
         $validated = $request->validate([
-            'message' => 'required|string|max:2000',
+            'message' => 'nullable|string|max:2000|required_without:media',
+            'media' => 'nullable|file|mimes:jpg,jpeg,png,webp,mp4,mov,webm|max:20480|required_without:message',
+            'is_temporary' => 'sometimes|boolean',
+            'is_view_once' => 'sometimes|boolean',
+            'reply_to_message_id' => 'nullable|integer|exists:chat_group_messages,id',
         ]);
+
+        $replyToId = $validated['reply_to_message_id'] ?? null;
+        if ($replyToId) {
+            $replyMessage = ChatGroupMessage::query()->find($replyToId);
+            abort_unless($replyMessage && (int) $replyMessage->chat_group_id === (int) $group->id, 422, 'El mensaje al que respondes no pertenece a este grupo.');
+        }
+
+        $mediaPath = $request->hasFile('media')
+            ? $this->storeGroupMedia($request->file('media'), $family->id, $group->id, $user->id)
+            : null;
+
+        $mediaType = $request->hasFile('media')
+            ? $this->resolveMediaType($request->file('media'))
+            : null;
+
+        $isTemporary = (bool) ($validated['is_temporary'] ?? false);
+        $isViewOnce = (bool) ($validated['is_view_once'] ?? false);
+
+        abort_if(!$mediaPath && !filled($validated['message'] ?? null), 422, 'Debes enviar texto o un archivo.');
 
         $message = ChatGroupMessage::create([
             'chat_group_id' => $group->id,
             'sender_id' => $user->id,
-            'message' => $validated['message'],
+            'reply_to_message_id' => $replyToId,
+            'message' => (string) ($validated['message'] ?? ''),
+            'media_path' => $mediaPath,
+            'media_type' => $mediaType,
+            'is_temporary' => $isTemporary,
+            'is_view_once' => $isViewOnce,
+            'expires_at' => $isTemporary ? now()->addDay() : null,
         ]);
 
-        $message->load('sender:id,name,username,email,avatar');
+        $message->load([
+            'sender:id,name,username,email,avatar',
+            'replyTo.sender:id,name,username,email,avatar',
+            'views' => fn ($query) => $query->where('user_id', $user->id),
+        ]);
 
         Cache::forget($this->groupTypingKey($family->id, $group->id, $user->id));
 
         return response()->json([
             'data' => new ChatGroupMessageResource($message),
         ], 201);
+    }
+
+    public function markViewed(Request $request, Family $family, ChatGroup $group, ChatGroupMessage $message): JsonResponse
+    {
+        $user = $request->user();
+        $this->authorizeGroupAccess($family, $group, $user->id);
+        abort_unless((int) $message->chat_group_id === (int) $group->id, 404);
+
+        if ($message->is_view_once && (int) $message->sender_id !== (int) $user->id) {
+            ChatGroupMessageView::firstOrCreate(
+                [
+                    'chat_group_message_id' => $message->id,
+                    'user_id' => $user->id,
+                ],
+                [
+                    'viewed_at' => now(),
+                ]
+            );
+        }
+
+        $message->load([
+            'sender:id,name,username,email,avatar',
+            'views' => fn ($query) => $query->where('user_id', $user->id),
+        ]);
+
+        return response()->json(['data' => new ChatGroupMessageResource($message)]);
+    }
+
+    public function updateMessage(Request $request, Family $family, ChatGroup $group, ChatGroupMessage $message): JsonResponse
+    {
+        $user = $request->user();
+        $this->authorizeGroupAccess($family, $group, $user->id);
+        abort_unless((int) $message->chat_group_id === (int) $group->id, 404);
+        abort_unless((int) $message->sender_id === (int) $user->id, 403, 'Solo puedes editar mensajes enviados por ti.');
+
+        $validated = $request->validate([
+            'message' => 'required|string|max:2000',
+        ]);
+
+        $message->update([
+            'message' => $validated['message'],
+            'edited_at' => now(),
+        ]);
+
+        $message->load([
+            'sender:id,name,username,email,avatar',
+            'replyTo.sender:id,name,username,email,avatar',
+            'views' => fn ($query) => $query->where('user_id', $user->id),
+        ]);
+
+        return response()->json(['data' => new ChatGroupMessageResource($message)]);
+    }
+
+    public function destroyMessage(Request $request, Family $family, ChatGroup $group, ChatGroupMessage $message): JsonResponse
+    {
+        $user = $request->user();
+        $this->authorizeGroupAccess($family, $group, $user->id);
+        abort_unless((int) $message->chat_group_id === (int) $group->id, 404);
+
+        if ((int) $message->sender_id !== (int) $user->id) {
+            ChatGroupMessageUserHidden::firstOrCreate(
+                [
+                    'chat_group_message_id' => $message->id,
+                    'user_id' => $user->id,
+                ],
+                [
+                    'hidden_at' => now(),
+                ]
+            );
+
+            return response()->json([
+                'message' => 'Mensaje ocultado para ti.',
+            ]);
+        }
+
+        if (filled($message->media_path)) {
+            Storage::disk('public')->delete($message->media_path);
+        }
+
+        $message->views()->delete();
+        $message->delete();
+
+        return response()->json([
+            'message' => 'Mensaje eliminado correctamente.',
+        ]);
     }
 
     public function typing(Request $request, Family $family, ChatGroup $group): JsonResponse
@@ -427,5 +552,15 @@ class ChatGroupController extends Controller
             403,
             'No tienes acceso a esta familia'
         );
+    }
+
+    private function storeGroupMedia(UploadedFile $file, int $familyId, int $groupId, int $userId): string
+    {
+        return $file->store("chat/{$familyId}/groups/{$groupId}/{$userId}", 'public');
+    }
+
+    private function resolveMediaType(UploadedFile $file): string
+    {
+        return str_starts_with($file->getMimeType() ?? '', 'video/') ? 'video' : 'image';
     }
 }

@@ -15,6 +15,9 @@ class TreeMemberResource extends JsonResource
             'id'           => $this->id,
             'family_id'    => $this->family_id,
             'user_id'      => $this->user_id,
+            'is_pet'       => (bool) $this->is_pet,
+            'owner_tree_member_id' => $this->owner_tree_member_id,
+            'created_by'   => $this->created_by,
             'app_user_email' => $this->app_user_email,
             'invite_status' => $this->invite_status,
             'parent_id'    => $this->parent_id,
@@ -36,6 +39,8 @@ class TreeMemberResource extends JsonResource
             // Spouse inline (without further nesting to avoid circular)
             'spouse'       => $this->whenLoaded('spouse', fn () => [
                 'id'           => $this->spouse->id,
+                'is_pet'       => (bool) $this->spouse->is_pet,
+                'owner_tree_member_id' => $this->spouse->owner_tree_member_id,
                 'first_name'   => $this->spouse->first_name,
                 'last_name'    => $this->spouse->last_name,
                 'full_name'    => $this->spouse->first_name . ' ' . $this->spouse->last_name,

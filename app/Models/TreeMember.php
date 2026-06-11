@@ -12,6 +12,8 @@ class TreeMember extends Model
     protected $fillable = [
         'family_id',
         'user_id',
+        'is_pet',
+        'owner_tree_member_id',
         'app_user_email',
         'invite_status',
         'parent_id',
@@ -34,6 +36,7 @@ class TreeMember extends Model
     protected $casts = [
         'birth_date'  => 'date',
         'death_date'  => 'date',
+        'is_pet' => 'boolean',
         'is_deceased' => 'boolean',
         'media_photos' => 'array',
     ];
@@ -51,6 +54,18 @@ class TreeMember extends Model
     public function parent(): BelongsTo
     {
         return $this->belongsTo(TreeMember::class, 'parent_id');
+    }
+
+    public function petOwner(): BelongsTo
+    {
+        return $this->belongsTo(TreeMember::class, 'owner_tree_member_id');
+    }
+
+    public function pets(): HasMany
+    {
+        return $this->hasMany(TreeMember::class, 'owner_tree_member_id')
+            ->where('is_pet', true)
+            ->whereNotIn('invite_status', ['pending', 'rejected', 'cancelled']);
     }
 
     public function spouse(): BelongsTo
