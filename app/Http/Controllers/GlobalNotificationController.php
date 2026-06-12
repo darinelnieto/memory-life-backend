@@ -16,6 +16,7 @@ class GlobalNotificationController extends Controller
     public function index(Request $request, Family $family): JsonResponse
     {
         $this->assertMember($family, $request);
+        $isEnglish = $this->isEnglish($request);
 
         $userId = (int) $request->user()->id;
         $items = [];
@@ -35,10 +36,10 @@ class GlobalNotificationController extends Controller
         foreach ($posts as $post) {
             $items[] = [
                 'id' => "post-{$post->id}",
-                'userName' => $post->user?->name ?? 'Familiar',
+                'userName' => $post->user?->name ?? $this->tr($isEnglish, 'Familiar', 'Family member'),
                 'userAvatar' => $post->user?->avatar_url,
-                'action' => 'Nueva publicacion',
-                'message' => $post->content ?: 'Publico contenido en el feed',
+                'action' => $this->tr($isEnglish, 'Nueva publicacion', 'New post'),
+                'message' => $post->content ?: $this->tr($isEnglish, 'Publico contenido en el feed', 'Posted in the feed'),
                 'mediaThumb' => null,
                 'createdAt' => $post->created_at?->toISOString() ?? now()->toISOString(),
                 'target' => [
@@ -61,9 +62,9 @@ class GlobalNotificationController extends Controller
         foreach ($comments as $comment) {
             $items[] = [
                 'id' => "comment-{$comment->id}",
-                'userName' => $comment->user?->name ?? 'Familiar',
+                'userName' => $comment->user?->name ?? $this->tr($isEnglish, 'Familiar', 'Family member'),
                 'userAvatar' => $comment->user?->avatar_url,
-                'action' => 'Comento una publicacion',
+                'action' => $this->tr($isEnglish, 'Comento una publicacion', 'Commented on a post'),
                 'message' => $comment->content,
                 'mediaThumb' => null,
                 'createdAt' => $comment->created_at?->toISOString() ?? now()->toISOString(),
@@ -88,10 +89,10 @@ class GlobalNotificationController extends Controller
         foreach ($reposts as $repost) {
             $items[] = [
                 'id' => "repost-{$repost->id}",
-                'userName' => $repost->user?->name ?? 'Familiar',
+                'userName' => $repost->user?->name ?? $this->tr($isEnglish, 'Familiar', 'Family member'),
                 'userAvatar' => $repost->user?->avatar_url,
-                'action' => 'Reposteo tu publicacion',
-                'message' => $repost->post?->content ?: 'Tu publicacion fue reposteada',
+                'action' => $this->tr($isEnglish, 'Reposteo tu publicacion', 'Reposted your post'),
+                'message' => $repost->post?->content ?: $this->tr($isEnglish, 'Tu publicacion fue reposteada', 'Your post was reposted'),
                 'mediaThumb' => null,
                 'createdAt' => $repost->created_at?->toISOString() ?? now()->toISOString(),
                 'target' => [
@@ -116,9 +117,9 @@ class GlobalNotificationController extends Controller
             $createdAt = $journey->published_at?->toISOString() ?? $journey->created_at?->toISOString() ?? now()->toISOString();
             $items[] = [
                 'id' => "journey-{$journey->id}",
-                'userName' => $journey->user?->name ?? 'Familiar',
+                'userName' => $journey->user?->name ?? $this->tr($isEnglish, 'Familiar', 'Family member'),
                 'userAvatar' => $journey->user?->avatar_url,
-                'action' => 'Publico un journey',
+                'action' => $this->tr($isEnglish, 'Publico un journey', 'Published a journey'),
                 'message' => $journey->title,
                 'mediaThumb' => null,
                 'createdAt' => $createdAt,
@@ -141,10 +142,10 @@ class GlobalNotificationController extends Controller
         foreach ($incomingShares as $share) {
             $items[] = [
                 'id' => "ml-share-{$share->id}",
-                'userName' => $share->sender?->name ?? 'Familiar',
+                'userName' => $share->sender?->name ?? $this->tr($isEnglish, 'Familiar', 'Family member'),
                 'userAvatar' => $share->sender?->avatar_url,
-                'action' => 'Te compartio un item de Memory Leaf',
-                'message' => $share->memoryLeaf?->full_name ?? 'Memory Leaf item',
+                'action' => $this->tr($isEnglish, 'Te compartio un item de Memory Leaf', 'Shared a Memory Leaf item with you'),
+                'message' => $share->memoryLeaf?->full_name ?? $this->tr($isEnglish, 'Item de Memory Leaf', 'Memory Leaf item'),
                 'mediaThumb' => null,
                 'createdAt' => $share->created_at?->toISOString() ?? now()->toISOString(),
                 'target' => [
@@ -169,10 +170,12 @@ class GlobalNotificationController extends Controller
             $accepted = $share->status === 'accepted';
             $items[] = [
                 'id' => "ml-share-status-{$share->id}",
-                'userName' => $share->recipient?->name ?? 'Familiar',
+                'userName' => $share->recipient?->name ?? $this->tr($isEnglish, 'Familiar', 'Family member'),
                 'userAvatar' => $share->recipient?->avatar_url,
-                'action' => $accepted ? 'Acepto tu compartido de Memory Leaf' : 'Rechazo tu compartido de Memory Leaf',
-                'message' => $share->memoryLeaf?->full_name ?? 'Memory Leaf item',
+                'action' => $accepted
+                    ? $this->tr($isEnglish, 'Acepto tu compartido de Memory Leaf', 'Accepted your Memory Leaf share')
+                    : $this->tr($isEnglish, 'Rechazo tu compartido de Memory Leaf', 'Rejected your Memory Leaf share'),
+                'message' => $share->memoryLeaf?->full_name ?? $this->tr($isEnglish, 'Item de Memory Leaf', 'Memory Leaf item'),
                 'mediaThumb' => null,
                 'createdAt' => $share->responded_at?->toISOString() ?? now()->toISOString(),
                 'target' => [
@@ -196,5 +199,16 @@ class GlobalNotificationController extends Controller
             $family->familyMembers()->where('user_id', $request->user()->id)->exists(),
             403
         );
+    }
+
+    private function isEnglish(Request $request): bool
+    {
+        $preferred = $request->getPreferredLanguage(['es', 'en']) ?? 'es';
+        return str_starts_with($preferred, 'en');
+    }
+
+    private function tr(bool $isEnglish, string $spanish, string $english): string
+    {
+        return $isEnglish ? $english : $spanish;
     }
 }
