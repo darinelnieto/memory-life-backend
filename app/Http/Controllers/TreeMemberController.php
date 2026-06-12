@@ -39,7 +39,15 @@ class TreeMemberController extends Controller
 
         $spouseIds = $spouseIdsQuery->pluck('spouse_id');
 
-        $rootsQuery = TreeMember::with(['children.spouse', 'children.children', 'spouse'])
+        $rootsQuery = TreeMember::with([
+            'spouse',
+            'spouses',
+            'children.spouse',
+            'children.spouses',
+            'children.children',
+            'children.children.spouse',
+            'children.children.spouses',
+        ])
             ->where('family_id', $family->id)
             ->whereNull('parent_id')
             ->whereNotIn('invite_status', ['pending', 'rejected', 'cancelled'])

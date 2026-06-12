@@ -33,13 +33,14 @@ class MemoryLeafController extends Controller
         $this->assertMember($family, $request);
 
         $data = $request->validate([
-            'first_name' => 'required|string|max:100',
-            'last_name'  => 'required|string|max:100',
-            'surname'    => 'required|string|max:100',
-            'bio'        => 'nullable|string|max:1000',
-            'birth_date' => 'nullable|date',
-            'death_date' => 'nullable|date',
-            'avatar'     => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'first_name'   => 'required|string|max:100',
+            'last_name'    => 'required|string|max:100',
+            'surname'      => 'required|string|max:100',
+            'relationship' => 'nullable|string|max:80',
+            'bio'          => 'nullable|string|max:1000',
+            'birth_date'   => 'nullable|date',
+            'death_date'   => 'nullable|date',
+            'avatar'       => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
         ]);
 
         $avatarPath = null;

@@ -74,6 +74,12 @@ class TreeMember extends Model
             ->whereNotIn('invite_status', ['pending', 'rejected']);
     }
 
+    public function spouses(): HasMany
+    {
+        return $this->hasMany(TreeMember::class, 'spouse_id')
+            ->whereNotIn('invite_status', ['pending', 'rejected']);
+    }
+
     public function children(): HasMany
     {
         return $this->hasMany(TreeMember::class, 'parent_id')

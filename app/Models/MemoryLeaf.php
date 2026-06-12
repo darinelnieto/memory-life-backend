@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class MemoryLeaf extends Model
 {
     protected $fillable = [
-        'family_id', 'first_name', 'last_name', 'surname',
+        'family_id', 'first_name', 'last_name', 'surname', 'relationship',
         'avatar', 'bio', 'birth_date', 'death_date', 'managed_by',
     ];
 

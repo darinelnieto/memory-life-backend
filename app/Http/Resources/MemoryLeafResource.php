@@ -15,6 +15,7 @@ class MemoryLeafResource extends JsonResource
             'last_name'        => $this->last_name,
             'full_name'        => $this->full_name,
             'surname'          => $this->surname,
+            'relationship'     => $this->relationship,
             'avatar_url'       => $this->avatar_url,
             'bio'              => $this->bio,
             'birth_date'       => $this->birth_date?->toDateString(),
