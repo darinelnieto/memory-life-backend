@@ -26,13 +26,11 @@ class FamilyController extends Controller
     public function store(Request $request): FamilyResource
     {
         $data = $request->validate([
-            'name'    => 'required|string|max:255',
             'surname' => 'required|string|max:100',
             'cover'   => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:20480',
         ]);
 
         $family = Family::create([
-            'name' => $data['name'],
             'surname' => $data['surname'],
             'owner_id' => $request->user()->id,
         ]);
@@ -62,7 +60,6 @@ class FamilyController extends Controller
         $this->authorizeOwner($family, $request);
 
         $data = $request->validate([
-            'name'    => 'sometimes|string|max:255',
             'surname' => 'sometimes|string|max:100',
         ]);
 

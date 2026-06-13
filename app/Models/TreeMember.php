@@ -84,7 +84,7 @@ class TreeMember extends Model
     {
         return $this->hasMany(TreeMember::class, 'parent_id')
             ->whereNotIn('invite_status', ['pending', 'rejected'])
-            ->with('children');
+            ->with(['children', 'spouse', 'spouses']);
     }
 
     public function creator(): BelongsTo

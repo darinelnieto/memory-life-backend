@@ -86,7 +86,7 @@ class FamilyInvitationController extends Controller
         $invitations = FamilyInvitation::where('email', strtolower($request->user()->email))
             ->where('status', 'pending')
             ->where('expires_at', '>', now())
-            ->with(['family:id,name,surname', 'inviter:id,name,email'])
+            ->with(['family:id,surname', 'inviter:id,name,email'])
             ->get();
 
         $data = $invitations->map(function (FamilyInvitation $invitation) {
@@ -148,7 +148,7 @@ class FamilyInvitationController extends Controller
             'message' => 'Te has unido a la familia.',
             'family'  => [
                 'id'      => $family->id,
-                'name'    => $family->name,
+                'name'    => '',
                 'surname' => $family->surname,
             ],
         ]);

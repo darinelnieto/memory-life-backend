@@ -12,6 +12,7 @@ use App\Http\Controllers\JourneyController;
 use App\Http\Controllers\JourneyItemController;
 use App\Http\Controllers\MemoryController;
 use App\Http\Controllers\MemoryLeafController;
+use App\Http\Controllers\ProfileCopyController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\TreeMemberController;
@@ -67,6 +68,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('profile/media', [ProfileController::class, 'media']);
         Route::get('profiles/{user}', [ProfileController::class, 'showByUser']);
         Route::get('profiles/{user}/media', [ProfileController::class, 'mediaByUser']);
+        Route::get('copy-profile-preview', [ProfileCopyController::class, 'preview']);
+        Route::post('copy-profile', [ProfileCopyController::class, 'copy']);
 
         // Chat directo entre miembros de la familia
         Route::get('chat/contacts', [ChatController::class, 'contacts']);

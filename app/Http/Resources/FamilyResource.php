@@ -13,7 +13,7 @@ class FamilyResource extends JsonResource
 
         return [
             'id'          => $this->id,
-            'name'        => $this->name,
+            'name'        => '',
             'surname'     => $this->surname,
             'avatar_url'  => $avatarPath ? asset('storage/' . $avatarPath) : null,
             'cover_url'   => $this->cover_photo ? asset('storage/' . $this->cover_photo) : null,

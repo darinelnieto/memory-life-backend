@@ -23,8 +23,11 @@ class AuthController extends Controller
             'password'   => 'required|string',
         ]);
 
-        $user = User::where('email', $request->identifier)
-            ->orWhere('username', $request->identifier)
+        $identifier = trim((string) $request->identifier);
+
+        $user = User::query()
+            ->whereRaw('LOWER(email) = ?', [strtolower($identifier)])
+            ->orWhere('phone', $identifier)
             ->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
@@ -49,15 +52,21 @@ class AuthController extends Controller
     {
         $request->validate([
             'name'                  => 'required|string|max:255',
-            'username'              => 'required|string|max:50|unique:users|alpha_dash',
+            'username'              => 'nullable|string|max:50|unique:users|alpha_dash',
             'email'                 => 'required|email|unique:users',
+            'phone'                 => 'required|string|max:30|unique:users,phone',
             'password'              => ['required', 'confirmed', PasswordRule::min(8)],
         ]);
 
+        $username = trim((string) $request->input('username', ''));
+        $email = strtolower(trim((string) $request->email));
+        $phone = trim((string) $request->phone);
+
         $user = User::create([
             'name'     => $request->name,
-            'username' => $request->username,
-            'email'    => $request->email,
+            'username' => $username !== '' ? $username : null,
+            'email'    => $email,
+            'phone'    => $phone,
             'password' => Hash::make($request->password),
         ]);
 

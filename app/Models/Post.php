@@ -22,6 +22,8 @@ class Post extends Model
         'allow_reposts',
         'show_on_profile',
         'scheduled_at',
+        'copied_from_post_id',
+        'copied_at',
     ];
 
     public function family(): BelongsTo

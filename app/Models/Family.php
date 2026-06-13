@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Family extends Model
 {
-    protected $fillable = ['owner_id', 'surname', 'name', 'avatar', 'cover_photo'];
+    protected $fillable = ['owner_id', 'surname', 'avatar', 'cover_photo'];
 
     public function owner(): BelongsTo
     {

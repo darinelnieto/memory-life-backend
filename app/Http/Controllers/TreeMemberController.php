@@ -144,7 +144,7 @@ class TreeMemberController extends Controller
     public function outgoingRequests(Request $request): JsonResponse
     {
         $requests = TreeMember::query()
-            ->with('family:id,name,surname')
+            ->with('family:id,surname')
             ->where('created_by', $request->user()->id)
             ->whereNotNull('app_user_email')
             ->whereIn('invite_status', ['pending', 'accepted', 'rejected', 'cancelled'])
@@ -156,7 +156,7 @@ class TreeMemberController extends Controller
             'data' => $requests->map(fn (TreeMember $member) => [
                 'id' => $member->id,
                 'family_id' => $member->family_id,
-                'family_name' => $member->family?->name,
+                'family_name' => '',
                 'family_surname' => $member->family?->surname,
                 'first_name' => $member->first_name,
                 'last_name' => $member->last_name,

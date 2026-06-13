@@ -24,7 +24,7 @@ class MemberAccountRegistrationController extends Controller
                 'email' => $invitation->email,
                 'family' => [
                     'id' => $invitation->family_id,
-                    'name' => $invitation->family?->name,
+                    'name' => '',
                     'surname' => $invitation->family?->surname,
                 ],
                 'member' => [
@@ -42,19 +42,23 @@ class MemberAccountRegistrationController extends Controller
         [$invitation, $member] = $this->resolveInvitationAndMember($token);
 
         $data = $request->validate([
-            'username' => 'required|string|max:50|alpha_dash|unique:users,username',
+            'username' => 'nullable|string|max:50|alpha_dash|unique:users,username',
             'email' => 'required|email|max:255',
+            'phone' => 'required|string|max:30|unique:users,phone',
             'password' => ['required', 'confirmed', PasswordRule::min(8)],
         ]);
 
         $email = strtolower(trim($data['email']));
+        $username = trim((string) ($data['username'] ?? ''));
+        $phone = trim((string) $data['phone']);
         abort_if($email !== strtolower($invitation->email), 422, 'El correo debe coincidir con el de la invitacion.');
         abort_if(User::query()->where('email', $email)->exists(), 422, 'Ya existe una cuenta con ese correo.');
 
         $user = User::query()->create([
             'name' => trim($member->first_name . ' ' . $member->last_name),
-            'username' => $data['username'],
+            'username' => $username !== '' ? $username : null,
             'email' => $email,
+            'phone' => $phone,
             'password' => Hash::make($data['password']),
         ]);
 
@@ -99,7 +103,7 @@ class MemberAccountRegistrationController extends Controller
             ],
             'family' => [
                 'id' => $invitation->family_id,
-                'name' => $invitation->family?->name,
+                'name' => '',
                 'surname' => $invitation->family?->surname,
             ],
         ], 201);

@@ -32,7 +32,7 @@ class MemberAccountInvitationNotification extends Notification
         return (new MailMessage())
             ->subject('Invitacion para crear tu cuenta en Memory Life')
             ->greeting('Hola ' . trim($this->member->first_name . ' ' . $this->member->last_name) . ',')
-            ->line('Te invitaron a unirte a la familia ' . trim($this->family->name . ' ' . $this->family->surname) . ' en Memory Life.')
+            ->line('Te invitaron a unirte a la familia ' . $this->family->surname . ' en Memory Life.')
             ->line('Crea tu usuario con este enlace para vincular tu perfil existente del arbol familiar.')
             ->action('Crear mi cuenta', $url)
             ->line('Si no solicitaste esto, puedes ignorar este correo.');

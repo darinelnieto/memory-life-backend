@@ -59,7 +59,7 @@ class ProfileController extends Controller
             'username'   => ['sometimes', 'string', 'max:60', Rule::unique('users', 'username')->ignore($user->id)],
             'bio'        => 'sometimes|nullable|string|max:1000',
             'birth_date' => 'sometimes|nullable|date|before:today',
-            'phone'      => 'sometimes|nullable|string|max:30',
+            'phone'      => ['sometimes', 'nullable', 'string', 'max:30', Rule::unique('users', 'phone')->ignore($user->id)],
             'location'   => 'sometimes|nullable|string|max:120',
             'gender'     => ['sometimes', 'nullable', Rule::in(['male', 'female', 'other', 'prefer_not_to_say'])],
         ]);

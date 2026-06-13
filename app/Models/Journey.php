@@ -8,7 +8,17 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Journey extends Model
 {
-    protected $fillable = ['family_id', 'user_id', 'tree_member_id', 'title', 'description', 'cover_path', 'published_at'];
+    protected $fillable = [
+        'family_id',
+        'user_id',
+        'tree_member_id',
+        'title',
+        'description',
+        'cover_path',
+        'published_at',
+        'copied_from_journey_id',
+        'copied_at',
+    ];
 
     protected $casts = [
         'published_at' => 'datetime',
