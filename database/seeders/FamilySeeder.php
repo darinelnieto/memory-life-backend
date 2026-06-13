@@ -18,7 +18,7 @@ class FamilySeeder extends Seeder
 
         $family = Family::firstOrCreate(
             ['owner_id' => $admin->id, 'surname' => 'NIETO'],
-            ['name' => 'Nieto García']
+            []
         );
 
         if (!$family->familyMembers()->where('user_id', $admin->id)->exists()) {
